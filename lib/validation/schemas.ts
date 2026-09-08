@@ -101,7 +101,11 @@ export const registerSchema = z
   .object({
     name: z.string().trim().min(1, "Name is required").max(200),
     email: z.string().trim().toLowerCase().email("A valid email is required").max(320),
-    password: z.string().min(10, "Password must be at least 10 characters").max(200),
+    password: z
+      .string()
+      .min(12, "Password must be at least 12 characters")
+      .max(200)
+      .refine((p) => !/^(.)\1+$/.test(p), "Password is too weak"),
     confirmPassword: z.string(),
     orcid: orcidSchema,
     affiliation: z.string().trim().max(300).optional().or(z.literal("")),

@@ -3,6 +3,7 @@
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { safeInternalPath } from "@/lib/safe-redirect";
 
 export function LoginForm({
   callbackUrl,
@@ -32,7 +33,7 @@ export function LoginForm({
       setMessage("Invalid email or password.");
       return;
     }
-    router.push(callbackUrl || "/dashboard");
+    router.push(safeInternalPath(callbackUrl, "/dashboard"));
     router.refresh();
   }
 

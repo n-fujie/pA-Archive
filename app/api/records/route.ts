@@ -1,10 +1,20 @@
 import type { NextRequest } from "next/server";
 import { searchRecords } from "@/lib/records/search";
 import { searchQuerySchema } from "@/lib/validation/schemas";
-import { createDraft } from "@/lib/records/service";
-import { RecordServiceError } from "@/lib/records/service";
+import { createDraft, RecordServiceError } from "@/lib/records/service";
 import { checkApiRole } from "@/lib/auth/guards";
-import { apiError, clientIp, json, readJson } from "@/lib/api";
+import { env } from "@/lib/env";
+import {
+  RATE_LIMITS,
+  apiError,
+  apiServerError,
+  assertSameOrigin,
+  clientIp,
+  enforceRateLimit,
+  json,
+  jsonPublic,
+  readJson,
+} from "@/lib/api";
 
 export const runtime = "nodejs";
 
@@ -14,12 +24,15 @@ export const runtime = "nodejs";
  * keyword, page, sort.
  */
 export async function GET(req: NextRequest) {
+  const limited = enforceRateLimit(req, RATE_LIMITS.publicApi);
+  if (limited) return limited;
+
   const url = new URL(req.url);
   const parsed = searchQuerySchema.safeParse(Object.fromEntries(url.searchParams));
   if (!parsed.success) return apiError("Invalid query", 422, parsed.error.flatten());
 
   const result = await searchRecords(parsed.data);
-  return json({
+  return jsonPublic({
     data: result.hits.map((h) => ({
       id: h.slug,
       title: h.title,
@@ -33,8 +46,8 @@ export async function GET(req: NextRequest) {
       doi: h.doi, // null unless genuinely registered
       peerReviewed: h.isPeerReviewed,
       status: h.status,
-      landingPage: `${process.env.NEXT_PUBLIC_SITE_URL}/records/${h.slug}`,
-      metadataUrl: `${process.env.NEXT_PUBLIC_SITE_URL}/api/records/${h.slug}/metadata`,
+      landingPage: `${env.siteUrl}/records/${h.slug}`,
+      metadataUrl: `${env.siteUrl}/api/records/${h.slug}/metadata`,
     })),
     pagination: {
       page: result.page,
@@ -51,8 +64,14 @@ export async function GET(req: NextRequest) {
  * Body: draft metadata JSON (see lib/validation/schemas.ts draftMetadataSchema).
  */
 export async function POST(req: NextRequest) {
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
+
   const gate = await checkApiRole("SUBMITTER");
   if (!gate.ok) return apiError(gate.error, gate.status);
+
+  const limited = enforceRateLimit(req, RATE_LIMITS.recordCreate, gate.user.id);
+  if (limited) return limited;
 
   const body = await readJson(req);
   if (!body) return apiError("JSON body required", 400);
@@ -64,14 +83,13 @@ export async function POST(req: NextRequest) {
         id: res.slug,
         recordId: res.recordId,
         status: "DRAFT",
-        landingPage: `${process.env.NEXT_PUBLIC_SITE_URL}/records/${res.slug}`,
+        landingPage: `${env.siteUrl}/records/${res.slug}`,
         note: "Draft created. Upload files, then POST /api/records/:id/publish.",
       },
       { status: 201 },
     );
   } catch (err) {
     if (err instanceof RecordServiceError) return apiError(err.message, err.status, err.details);
-    console.error(err);
-    return apiError("Internal error", 500);
+    return apiServerError(err, "POST /api/records");
   }
 }

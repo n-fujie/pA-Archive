@@ -1,5 +1,8 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/guards";
+
+export const metadata: Metadata = { title: "Administration", robots: { index: false, follow: false } };
 
 const tabs = [
   ["Overview", "/admin"],

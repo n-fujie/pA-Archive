@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { parseRecordSlug } from "@/lib/identifiers/paid";
 import { loadRecordView } from "@/lib/records/load";
 import { formatCitation, type CitationStyle } from "@/lib/citation";
+import { RATE_LIMITS, enforceRateLimit } from "@/lib/api";
 
 export const runtime = "nodejs";
 
@@ -11,6 +12,9 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const limited = enforceRateLimit(req, RATE_LIMITS.publicApi);
+  if (limited) return limited;
+
   const { id } = await params;
   const num = parseRecordSlug(id);
   if (num === null) return NextResponse.json({ error: "Invalid record id" }, { status: 400 });

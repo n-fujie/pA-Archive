@@ -9,8 +9,10 @@ import {
   CATEGORY_LABEL,
   PUBLICATION_TYPE_LABEL,
 } from "@/lib/constants";
+import { env } from "@/lib/env";
 import { formatBytes, formatDate } from "@/lib/format";
 import { toJsonLd } from "@/lib/metadata";
+import { jsonForScript } from "@/lib/safe-json";
 import { citationIdentifier } from "@/lib/citation";
 import { CiteWidget } from "@/components/cite-widget";
 import { MetadataLinks } from "@/components/metadata-links";
@@ -43,10 +45,10 @@ export async function generateMetadata({ params, searchParams }: Params): Promis
     citation_publication_date: (view.publicationDate ?? view.publishedAt ?? "").slice(0, 10),
     citation_language: view.language,
     citation_public_url: view.canonicalUrl,
-    citation_technical_report_institution: process.env.NEXT_PUBLIC_OPERATOR_NAME || "P/A Institute",
+    citation_technical_report_institution: env.operatorName,
   };
   const pdf = view.files.find((f) => f.contentType === "application/pdf");
-  if (pdf) other.citation_pdf_url = `${process.env.NEXT_PUBLIC_SITE_URL}${pdf.downloadPath}`;
+  if (pdf) other.citation_pdf_url = `${env.siteUrl}${pdf.downloadPath}`;
   // citation_doi is emitted ONLY when a DOI is genuinely registered.
   if (view.registeredDoi) other.citation_doi = view.registeredDoi;
   if (view.keywords.length) other.citation_keywords = view.keywords.join("; ");
@@ -91,7 +93,7 @@ export default async function RecordPage({ params, searchParams }: Params) {
       <script
         type="application/ld+json"
         // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonForScript(jsonLd) }}
       />
 
       <div>

@@ -16,6 +16,8 @@ import {
   RecordServiceError,
 } from "@/lib/records/service";
 import { noticeSchema } from "@/lib/validation/schemas";
+import { actionRateLimit } from "@/lib/rate-limit-action";
+import { RATE_LIMITS } from "@/lib/rate-limit";
 
 export interface FormState {
   ok?: boolean;
@@ -64,6 +66,9 @@ export async function createDraftAction(
   const user = await getSessionUser();
   if (!user) redirect("/login?callbackUrl=/submit");
 
+  const limited = await actionRateLimit(RATE_LIMITS.recordCreate, user.id);
+  if (limited) return { error: limited };
+
   try {
     const res = await createDraft(user.id, parseMetadata(formData), await ip());
     revalidatePath("/dashboard");
@@ -90,6 +95,8 @@ async function resolveManageable(slug: string) {
   });
   if (!record) return { error: "Record not found" as const };
   if (!canManageRecord(user, record)) return { error: "Not authorized" as const };
+  const limited = await actionRateLimit(RATE_LIMITS.mutation, user.id);
+  if (limited) return { error: limited };
   return { user, record, num };
 }
 

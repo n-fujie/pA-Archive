@@ -3,21 +3,37 @@ import { prisma } from "@/lib/db";
 import { parseRecordSlug } from "@/lib/identifiers/paid";
 import { publishRecord, RecordServiceError } from "@/lib/records/service";
 import { getSessionUser, canManageRecord } from "@/lib/auth/guards";
-import { apiError, clientIp, json } from "@/lib/api";
+import { env } from "@/lib/env";
+import {
+  RATE_LIMITS,
+  apiError,
+  apiServerError,
+  assertSameOrigin,
+  clientIp,
+  enforceRateLimit,
+  json,
+} from "@/lib/api";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 /** POST /api/records/:id/publish — AUTHENTICATED owner/editor. */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
+
   const { id } = await params;
   const num = parseRecordSlug(id);
   if (num === null) return apiError("Invalid record id", 400);
 
   const user = await getSessionUser();
   if (!user) return apiError("Authentication required", 401);
+
+  const limited = enforceRateLimit(req, RATE_LIMITS.mutation, user.id);
+  if (limited) return limited;
 
   const record = await prisma.record.findUnique({
     where: { paidNumber: num },
@@ -35,11 +51,10 @@ export async function POST(
       doi: result.doi, // null unless a real DOI registrar is connected
       doiStatus: result.doiStatus,
       warnings: result.warnings,
-      landingPage: `${process.env.NEXT_PUBLIC_SITE_URL}/records/${result.slug}`,
+      landingPage: `${env.siteUrl}/records/${result.slug}`,
     });
   } catch (err) {
     if (err instanceof RecordServiceError) return apiError(err.message, err.status, err.details);
-    console.error(err);
-    return apiError("Internal error", 500);
+    return apiServerError(err, "POST /api/records/:id/publish");
   }
 }

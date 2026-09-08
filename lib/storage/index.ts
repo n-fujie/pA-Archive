@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { env } from "@/lib/env";
+import { assertStorageSafeForRuntime, env } from "@/lib/env";
 import {
   ALLOWED_MIME_PREFIXES,
   ALLOWED_UPLOAD_EXTENSIONS,
@@ -16,6 +16,7 @@ let driver: StorageDriver | null = null;
 
 export function getStorage(): StorageDriver {
   if (driver) return driver;
+  assertStorageSafeForRuntime();
   switch (env.storageProvider) {
     case "s3":
       driver = new S3StorageDriver();

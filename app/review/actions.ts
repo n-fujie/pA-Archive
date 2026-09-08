@@ -5,6 +5,8 @@ import { headers } from "next/headers";
 import { checkApiRole } from "@/lib/auth/guards";
 import { submitReview } from "@/lib/reviews/service";
 import { RecordServiceError } from "@/lib/records/service";
+import { actionRateLimit } from "@/lib/rate-limit-action";
+import { RATE_LIMITS } from "@/lib/rate-limit";
 import type { FormState } from "@/app/submit/actions";
 
 async function ip() {
@@ -18,6 +20,9 @@ export async function submitReviewAction(
 ): Promise<FormState> {
   const gate = await checkApiRole("REVIEWER");
   if (!gate.ok) return { error: gate.error };
+
+  const limited = await actionRateLimit(RATE_LIMITS.mutation, gate.user.id);
+  if (limited) return { error: limited };
 
   try {
     await submitReview(

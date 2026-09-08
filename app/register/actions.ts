@@ -6,6 +6,8 @@ import { env } from "@/lib/env";
 import { hashPassword } from "@/lib/auth/password";
 import { registerSchema } from "@/lib/validation/schemas";
 import { writeAudit } from "@/lib/audit";
+import { actionRateLimit } from "@/lib/rate-limit-action";
+import { RATE_LIMITS } from "@/lib/rate-limit";
 
 export interface RegisterState {
   error?: string;
@@ -19,6 +21,9 @@ export async function registerAction(
   if (!env.allowOpenSignup) {
     return { error: "Open registration is disabled. Contact an administrator." };
   }
+
+  const limited = await actionRateLimit(RATE_LIMITS.register);
+  if (limited) return { error: limited };
 
   const parsed = registerSchema.safeParse({
     name: formData.get("name"),

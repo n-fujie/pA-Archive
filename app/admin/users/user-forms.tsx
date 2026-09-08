@@ -50,7 +50,7 @@ export function CreateUserForm() {
       {state.ok && <p className="text-sm text-ok">User created.</p>}
       <input name="email" type="email" placeholder="Email" required className="input" />
       <input name="name" placeholder="Name" className="input" />
-      <input name="password" type="password" placeholder="Temp password (min 10 chars)" required className="input" />
+      <input name="password" type="password" placeholder="Temp password (min 12 chars)" required className="input" />
       <select name="role" className="input" defaultValue="SUBMITTER">
         {ROLES.map((r) => (
           <option key={r} value={r}>

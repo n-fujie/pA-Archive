@@ -25,13 +25,31 @@ function int(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function firstStr(keys: string[], fallback = ""): string {
+  for (const k of keys) {
+    const v = process.env[k];
+    if (v !== undefined && v !== "") return v;
+  }
+  return fallback;
+}
+
 export const env = {
-  siteUrl: str("NEXT_PUBLIC_SITE_URL", "http://localhost:3000").replace(/\/$/, ""),
+  /**
+   * Canonical public origin. Prefer the server-only APP_URL; fall back to the
+   * public NEXT_PUBLIC_SITE_URL. Never derived from VERCEL_URL so that preview
+   * deployments do not emit preview hostnames in canonical URLs / metadata.
+   */
+  siteUrl: firstStr(
+    ["APP_URL", "NEXT_PUBLIC_SITE_URL"],
+    "http://localhost:3000",
+  ).replace(/\/$/, ""),
   operatorName: str("NEXT_PUBLIC_OPERATOR_NAME", "P/A Institute"),
   serviceName: str("NEXT_PUBLIC_SERVICE_NAME", "P/A Archive"),
   parentDomain: str("NEXT_PUBLIC_PARENT_DOMAIN", "platodesignlab.com"),
 
   databaseUrl: str("DATABASE_URL"),
+  // Non-pooled URL used for `prisma migrate` (Neon/Supabase pgbouncer setups).
+  directDatabaseUrl: firstStr(["DIRECT_DATABASE_URL", "DIRECT_URL"]),
 
   authSecret: str("AUTH_SECRET"),
 
@@ -71,12 +89,42 @@ export const env = {
 
   allowOpenSignup: bool("ALLOW_OPEN_SIGNUP", true),
 
-  seedAdminPassword: str("SEED_ADMIN_PASSWORD", "password123"),
-  seedDefaultPassword: str("SEED_DEFAULT_PASSWORD", "password123"),
-  seedSampleRecord: bool("SEED_SAMPLE_RECORD", true),
+  // --- Seeding (development only) -------------------------------------------
+  // Demo users / sample record are created ONLY when SEED_DEMO_USERS=true AND
+  // NODE_ENV !== production. There is no default password anywhere.
+  seedDemoUsers: bool("SEED_DEMO_USERS", false),
+  seedDefaultPassword: str("SEED_DEFAULT_PASSWORD"),
+  seedSampleRecord: bool("SEED_SAMPLE_RECORD", false),
+
+  // --- Initial admin bootstrap (scripts/create-admin.ts) ------------------
+  initialAdminEmail: str("INITIAL_ADMIN_EMAIL"),
+  initialAdminPassword: str("INITIAL_ADMIN_PASSWORD"),
+  initialAdminName: str("INITIAL_ADMIN_NAME", "Administrator"),
+
+  // --- Operational -------------------------------------------------------
+  // Allow the local filesystem storage driver in production (self-hosting).
+  // On Vercel this MUST stay false — the filesystem is ephemeral.
+  allowLocalStorageInProduction: bool("ALLOW_LOCAL_STORAGE_IN_PRODUCTION", false),
+  rateLimitEnabled: bool("RATE_LIMIT_ENABLED", true),
+  trustProxyHeaders: bool("TRUST_PROXY_HEADERS", true),
 
   isProduction: process.env.NODE_ENV === "production",
+  vercelEnv: str("VERCEL_ENV"), // "production" | "preview" | "development" | ""
 };
+
+/** Fatal in production: local filesystem storage on an ephemeral host. */
+export function assertStorageSafeForRuntime(): void {
+  if (
+    env.isProduction &&
+    env.storageProvider === "local" &&
+    !env.allowLocalStorageInProduction
+  ) {
+    throw new Error(
+      "STORAGE_PROVIDER=local is not allowed in production (ephemeral filesystem). " +
+        "Set STORAGE_PROVIDER=vercel-blob or s3, or ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true for a self-hosted persistent volume.",
+    );
+  }
+}
 
 /**
  * Whether a *formal DOI* provider is fully configured. When false, the system

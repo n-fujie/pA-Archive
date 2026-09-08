@@ -29,7 +29,7 @@ export function RegisterForm() {
       <Field name="email" label="Email" type="email" required errors={fe.email} />
       <Field
         name="password"
-        label="Password (min 10 characters)"
+        label="Password (min 12 characters)"
         type="password"
         required
         errors={fe.password}

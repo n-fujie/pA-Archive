@@ -6,6 +6,7 @@ import {
   sha256,
   validateUpload,
 } from "@/lib/storage";
+import { logger } from "@/lib/log";
 import { RecordServiceError } from "./service";
 
 export interface UploadedFile {
@@ -56,22 +57,30 @@ export async function addFileToRecord(
     filename: file.filename,
   });
 
-  const created = await prisma.fileObject.create({
-    data: {
-      id: fileId,
-      recordVersionId: version.id,
-      storageProvider: put.provider,
-      storageKey: put.key,
-      downloadUrl: put.url,
-      originalName: file.filename,
-      contentType: file.contentType || "application/octet-stream",
-      byteSize: file.bytes.length,
-      checksumSha256: checksum,
-      label: file.label ?? null,
-      isPrimary: Boolean(file.isPrimary),
-      uploadedById: userId,
-    },
-  });
+  let created;
+  try {
+    created = await prisma.fileObject.create({
+      data: {
+        id: fileId,
+        recordVersionId: version.id,
+        storageProvider: put.provider,
+        storageKey: put.key,
+        downloadUrl: put.url,
+        originalName: file.filename,
+        contentType: file.contentType || "application/octet-stream",
+        byteSize: file.bytes.length,
+        checksumSha256: checksum,
+        label: file.label ?? null,
+        isPrimary: Boolean(file.isPrimary),
+        uploadedById: userId,
+      },
+    });
+  } catch (err) {
+    // The DB row could not be created — remove the just-written object so we
+    // do not leave an orphan in storage.
+    await storage.delete(put.key).catch(() => undefined);
+    throw err;
+  }
 
   await writeAudit({
     action: "FILE_UPLOAD",
@@ -116,29 +125,35 @@ export async function replaceFile(
     filename: file.filename,
   });
 
-  const created = await prisma.$transaction(async (tx) => {
-    const c = await tx.fileObject.create({
-      data: {
-        id: fileId,
-        recordVersionId: version.id,
-        storageProvider: put.provider,
-        storageKey: put.key,
-        downloadUrl: put.url,
-        originalName: file.filename,
-        contentType: file.contentType || "application/octet-stream",
-        byteSize: file.bytes.length,
-        checksumSha256: checksum,
-        label: old.label,
-        isPrimary: old.isPrimary,
-        uploadedById: userId,
-      },
+  let created;
+  try {
+    created = await prisma.$transaction(async (tx) => {
+      const c = await tx.fileObject.create({
+        data: {
+          id: fileId,
+          recordVersionId: version.id,
+          storageProvider: put.provider,
+          storageKey: put.key,
+          downloadUrl: put.url,
+          originalName: file.filename,
+          contentType: file.contentType || "application/octet-stream",
+          byteSize: file.bytes.length,
+          checksumSha256: checksum,
+          label: old.label,
+          isPrimary: old.isPrimary,
+          uploadedById: userId,
+        },
+      });
+      await tx.fileObject.update({
+        where: { id: old.id },
+        data: { supersededById: c.id },
+      });
+      return c;
     });
-    await tx.fileObject.update({
-      where: { id: old.id },
-      data: { supersededById: c.id },
-    });
-    return c;
-  });
+  } catch (err) {
+    await storage.delete(put.key).catch(() => undefined);
+    throw err;
+  }
 
   await writeAudit({
     action: "FILE_REPLACE",
@@ -172,7 +187,7 @@ export async function deleteFileFromDraft(
     try {
       await getStorage().delete(file.storageKey);
     } catch (err) {
-      console.error("[files] storage delete failed", err);
+      logger.error("files.storage_delete_failed", err, { storageKey: file.storageKey });
     }
   }
   await writeAudit({

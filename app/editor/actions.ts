@@ -12,6 +12,8 @@ import {
 } from "@/lib/reviews/service";
 import { addRelationship } from "@/lib/records/relationships";
 import { RecordServiceError } from "@/lib/records/service";
+import { actionRateLimit } from "@/lib/rate-limit-action";
+import { RATE_LIMITS } from "@/lib/rate-limit";
 import type { FormState } from "@/app/submit/actions";
 
 async function ip() {
@@ -32,6 +34,8 @@ export async function assignReviewerAction(
 ): Promise<FormState> {
   const gate = await checkApiRole("EDITOR");
   if (!gate.ok) return { error: gate.error };
+  const rl = await actionRateLimit(RATE_LIMITS.mutation, gate.user.id);
+  if (rl) return { error: rl };
   const recordId = await recordIdFromSlug(slug);
   if (!recordId) return { error: "Record not found" };
   try {
@@ -57,6 +61,8 @@ export async function setStatusAction(
 ): Promise<FormState> {
   const gate = await checkApiRole("EDITOR");
   if (!gate.ok) return { error: gate.error };
+  const rl = await actionRateLimit(RATE_LIMITS.mutation, gate.user.id);
+  if (rl) return { error: rl };
   const recordId = await recordIdFromSlug(slug);
   if (!recordId) return { error: "Record not found" };
   try {
@@ -73,6 +79,8 @@ export async function setStatusAction(
 export async function promoteReviewAction(reviewId: string): Promise<FormState> {
   const gate = await checkApiRole("EDITOR");
   if (!gate.ok) return { error: gate.error };
+  const rl = await actionRateLimit(RATE_LIMITS.mutation, gate.user.id);
+  if (rl) return { error: rl };
   try {
     const res = await publishReviewAsRecord(reviewId, gate.user.id, await ip());
     revalidatePath(`/records/${res.slug}`);
@@ -90,6 +98,8 @@ export async function addRelationshipAction(
 ): Promise<FormState> {
   const gate = await checkApiRole("EDITOR");
   if (!gate.ok) return { error: gate.error };
+  const rl = await actionRateLimit(RATE_LIMITS.mutation, gate.user.id);
+  if (rl) return { error: rl };
   const recordId = await recordIdFromSlug(slug);
   if (!recordId) return { error: "Record not found" };
   try {

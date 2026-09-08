@@ -10,6 +10,8 @@ import { roleChangeSchema } from "@/lib/validation/schemas";
 import { getDoiProvider } from "@/lib/identifiers";
 import type { IdentifierMintInput } from "@/lib/identifiers";
 import { env } from "@/lib/env";
+import { actionRateLimit } from "@/lib/rate-limit-action";
+import { RATE_LIMITS } from "@/lib/rate-limit";
 import type { FormState } from "@/app/submit/actions";
 
 async function ip() {
@@ -19,6 +21,8 @@ async function ip() {
 export async function changeRoleAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const gate = await checkApiRole("ADMIN");
   if (!gate.ok) return { error: gate.error };
+  const rl = await actionRateLimit(RATE_LIMITS.mutation, gate.user.id);
+  if (rl) return { error: rl };
 
   const parsed = roleChangeSchema.safeParse({
     userId: formData.get("userId"),
@@ -49,13 +53,15 @@ export async function changeRoleAction(_prev: FormState, formData: FormData): Pr
 export async function toggleUserDisabledAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const gate = await checkApiRole("ADMIN");
   if (!gate.ok) return { error: gate.error };
+  const rl = await actionRateLimit(RATE_LIMITS.mutation, gate.user.id);
+  if (rl) return { error: rl };
   const userId = String(formData.get("userId") ?? "");
   if (userId === gate.user.id) return { error: "You cannot disable your own account." };
   const target = await prisma.user.findUnique({ where: { id: userId } });
   if (!target) return { error: "User not found" };
   await prisma.user.update({ where: { id: userId }, data: { disabled: !target.disabled } });
   await writeAudit({
-    action: "USER_ROLE_CHANGE",
+    action: "USER_DISABLED",
     actorId: gate.user.id,
     targetType: "user",
     targetId: userId,
@@ -69,13 +75,15 @@ export async function toggleUserDisabledAction(_prev: FormState, formData: FormD
 export async function createUserAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const gate = await checkApiRole("ADMIN");
   if (!gate.ok) return { error: gate.error };
+  const rl = await actionRateLimit(RATE_LIMITS.mutation, gate.user.id);
+  if (rl) return { error: rl };
 
   const email = String(formData.get("email") ?? "").toLowerCase().trim();
   const name = String(formData.get("name") ?? "").trim();
   const role = String(formData.get("role") ?? "SUBMITTER");
   const password = String(formData.get("password") ?? "");
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { error: "Valid email required" };
-  if (password.length < 10) return { error: "Password must be at least 10 characters" };
+  if (password.length < 12) return { error: "Password must be at least 12 characters" };
   if (!["READER", "SUBMITTER", "REVIEWER", "EDITOR", "ADMIN"].includes(role)) {
     return { error: "Invalid role" };
   }
@@ -86,7 +94,7 @@ export async function createUserAction(_prev: FormState, formData: FormData): Pr
     data: { email, name: name || null, role: role as never, passwordHash: await hashPassword(password) },
   });
   await writeAudit({
-    action: "USER_ROLE_CHANGE",
+    action: "ADMIN_CHANGE",
     actorId: gate.user.id,
     targetType: "user",
     targetId: created.id,
@@ -101,6 +109,9 @@ export async function createUserAction(_prev: FormState, formData: FormData): Pr
 export async function retryDoiAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const gate = await checkApiRole("ADMIN");
   if (!gate.ok) return { error: gate.error };
+
+  const limited = await actionRateLimit(RATE_LIMITS.doiRetry, gate.user.id);
+  if (limited) return { error: limited };
 
   const provider = getDoiProvider();
   if (!provider) {

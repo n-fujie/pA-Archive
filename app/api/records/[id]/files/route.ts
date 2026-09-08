@@ -8,7 +8,15 @@ import {
   replaceFile,
 } from "@/lib/records/files";
 import { RecordServiceError } from "@/lib/records/service";
-import { apiError, clientIp, json } from "@/lib/api";
+import {
+  RATE_LIMITS,
+  apiError,
+  apiServerError,
+  assertSameOrigin,
+  clientIp,
+  enforceRateLimit,
+  json,
+} from "@/lib/api";
 import { env } from "@/lib/env";
 
 export const runtime = "nodejs";
@@ -31,12 +39,18 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
+
   const { id } = await params;
   const num = parseRecordSlug(id);
   if (num === null) return apiError("Invalid record id", 400);
 
   const gate = await authorize(num);
   if ("error" in gate) return gate.error;
+
+  const limited = enforceRateLimit(req, RATE_LIMITS.upload, gate.user.id);
+  if (limited) return limited;
 
   const contentLength = Number(req.headers.get("content-length") ?? "0");
   if (contentLength > env.maxUploadBytes + 1_000_000) {
@@ -69,8 +83,7 @@ export async function POST(
     return json({ ok: true, fileId: res.fileId }, { status: 201 });
   } catch (err) {
     if (err instanceof RecordServiceError) return apiError(err.message, err.status, err.details);
-    console.error(err);
-    return apiError("Upload failed", 500);
+    return apiServerError(err, "POST /api/records/:id/files");
   }
 }
 
@@ -79,12 +92,18 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
+
   const { id } = await params;
   const num = parseRecordSlug(id);
   if (num === null) return apiError("Invalid record id", 400);
 
   const gate = await authorize(num);
   if ("error" in gate) return gate.error;
+
+  const limited = enforceRateLimit(req, RATE_LIMITS.mutation, gate.user.id);
+  if (limited) return limited;
 
   const fileId = new URL(req.url).searchParams.get("fileId");
   if (!fileId) return apiError("fileId query param required", 400);
@@ -94,7 +113,6 @@ export async function DELETE(
     return json({ ok: true });
   } catch (err) {
     if (err instanceof RecordServiceError) return apiError(err.message, err.status, err.details);
-    console.error(err);
-    return apiError("Delete failed", 500);
+    return apiServerError(err, "DELETE /api/records/:id/files");
   }
 }

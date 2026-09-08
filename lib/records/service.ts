@@ -415,6 +415,14 @@ export async function publishRecord(
 
   if (doiProvider) {
     try {
+      await writeAudit({
+        action: "DOI_REGISTRATION_ATTEMPT",
+        actorId: userId,
+        targetType: "identifier",
+        targetId: record.id,
+        summary: `DOI registration attempt for ${paidValue} via ${doiProvider.name}`,
+        ip,
+      });
       const res = await doiProvider.mint(mintInput);
       doiValue = res.value;
       doiStatus = res.status;

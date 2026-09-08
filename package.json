@@ -17,6 +17,9 @@
     "prisma:studio": "prisma studio",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "create-admin": "tsx scripts/create-admin.ts",
+    "backfill-checksums": "tsx scripts/backfill-checksums.ts",
+    "smoke:prod": "tsx scripts/production-smoke.ts",
     "postinstall": "prisma generate"
   },
   "prisma": {

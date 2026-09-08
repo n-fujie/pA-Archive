@@ -1,4 +1,5 @@
 import { SCHEMA_ORG_TYPE } from "@/lib/constants";
+import { env } from "@/lib/env";
 import type { RecordView } from "@/lib/records/types";
 import { toBibtex, toRis } from "@/lib/citation";
 
@@ -11,8 +12,8 @@ import { toBibtex, toRis } from "@/lib/citation";
  */
 
 export function toJsonLd(view: RecordView): Record<string, unknown> {
-  const operator = process.env.NEXT_PUBLIC_OPERATOR_NAME || "P/A Institute";
-  const service = process.env.NEXT_PUBLIC_SERVICE_NAME || "P/A Archive";
+  const operator = env.operatorName;
+  const service = env.serviceName;
 
   const identifiers: unknown[] = [
     {
@@ -57,7 +58,7 @@ export function toJsonLd(view: RecordView): Record<string, unknown> {
       : {}),
     publisher: { "@type": "Organization", name: operator },
     provider: { "@type": "Organization", name: operator },
-    isPartOf: { "@type": "CreativeWorkSeries", name: service, url: process.env.NEXT_PUBLIC_SITE_URL },
+    isPartOf: { "@type": "CreativeWorkSeries", name: service, url: env.siteUrl },
     ...(view.keywords.length ? { keywords: view.keywords } : {}),
     ...(view.license?.url ? { license: view.license.url } : view.license ? { license: view.license.code } : {}),
     version: view.versionLabel,
@@ -71,7 +72,7 @@ export function toJsonLd(view: RecordView): Record<string, unknown> {
       ? {
           associatedMedia: view.files.map((f) => ({
             "@type": "MediaObject",
-            contentUrl: `${process.env.NEXT_PUBLIC_SITE_URL}${f.downloadPath}`,
+            contentUrl: `${env.siteUrl}${f.downloadPath}`,
             encodingFormat: f.contentType,
             contentSize: String(f.byteSize),
             name: f.originalName,
@@ -92,7 +93,7 @@ export function toJsonLd(view: RecordView): Record<string, unknown> {
 
 /** Dublin Core (simple DC as flat key/values; also renderable as XML). */
 export function toDublinCore(view: RecordView): Record<string, string[]> {
-  const operator = process.env.NEXT_PUBLIC_OPERATOR_NAME || "P/A Institute";
+  const operator = env.operatorName;
   const dc: Record<string, string[]> = {
     "dc.title": [view.title],
     "dc.creator": view.authors.map((a) => a.fullName),
@@ -169,7 +170,7 @@ export function toMetadataJson(view: RecordView): Record<string, unknown> {
       contentType: f.contentType,
       byteSize: f.byteSize,
       checksumSha256: f.checksumSha256,
-      downloadUrl: `${process.env.NEXT_PUBLIC_SITE_URL}${f.downloadPath}`,
+      downloadUrl: `${env.siteUrl}${f.downloadPath}`,
     })),
     downloadCount: view.downloadCount,
     schemaOrg: toJsonLd(view),

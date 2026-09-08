@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AuditAction, Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/log";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -36,6 +37,6 @@ export async function writeAudit(input: AuditInput, db: Db = prisma): Promise<vo
     });
   } catch (err) {
     // Never let audit failure break the primary operation; log and continue.
-    console.error("[audit] failed to write log", err);
+    logger.error("audit.write_failed", err, { action: input.action, targetType: input.targetType });
   }
 }
