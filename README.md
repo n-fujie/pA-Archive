@@ -10,15 +10,24 @@ registry** for **P/A Institute**.
 
 ### Production status
 
-> **Not yet deployed.** The codebase is production‑ready and fully verified
-> locally (tests, build, lint, HTTP smoke test — see [Tests](#tests)), but the
-> live Vercel project, production database, object store, custom domain and
-> first admin have **not** been created — those steps require the operator's
-> Vercel/DNS access. Follow [§7 Production Deployment (runbook)](#7-production-deployment-runbook)
-> and [§8 launch checklist](#8-production-launch-checklist).
+> **Production: https://archive.platodesignlab.com** — live.
 >
-> Once live, this line becomes:
-> `Production: https://archive.platodesignlab.com` — and not before.
+> - Vercel project `pa-archive` (team `platoststems-projects`), custom domain
+>   connected, HTTPS + HSTS active.
+> - Database: **Neon Postgres** (`pa-archive-prod`, region `iad1`), connected to
+>   the Production environment only. Migrations applied via `prisma migrate deploy`;
+>   licenses seeded; no users, no sample record.
+> - Object storage: **Vercel Blob** (`pa-archive-files`, public store), Production only.
+> - Identifiers: `DOI_PROVIDER=local` — **P/A Identifiers only, no DOI displayed**
+>   anywhere (verified end‑to‑end in production). Connect a registrar per §6.
+> - Signups: `ALLOW_OPEN_SIGNUP=false` (closed beta — admin creates accounts).
+> - **28/28 production smoke test passed.** All smoke‑test data was removed
+>   afterward; the archive starts empty with the PAID sequence at `1`.
+> - **First admin not yet created** — run `npm run create-admin` (see [§7.6](#76-create-the-first-administrator)).
+> - Preview deployments have no env vars (cannot reach production data); feature
+>   branches do not auto‑deploy (`vercel.json`).
+>
+> Rebuild/redeploy: push to `main`. Runbook: [§7](#7-production-deployment-runbook). Checklist: [§8](#8-production-launch-checklist).
 
 P/A Archive lets researchers deposit scholarly works, generates a public landing
 page for each, and assigns a **permanent identifier**. It is a standalone
