@@ -1,0 +1,557 @@
+// P/A Archive — data model
+// PostgreSQL-compatible. Works with Neon, Supabase, Vercel Postgres, RDS, etc.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  READER
+  SUBMITTER
+  REVIEWER
+  EDITOR
+  ADMIN
+}
+
+enum RecordStatus {
+  DRAFT
+  PUBLISHED
+  RETRACTED
+  WITHDRAWN
+}
+
+enum VersionState {
+  DRAFT
+  PUBLISHED
+}
+
+enum PublicationType {
+  JOURNAL_ARTICLE
+  PREPRINT
+  BOOK
+  BOOK_CHAPTER
+  WORKING_PAPER
+  RESEARCH_NOTE
+  DATASET
+  SOFTWARE
+  PEER_REVIEW
+  REPORT
+  THESIS
+  PRESENTATION
+  OTHER
+}
+
+enum PeerReviewStatus {
+  NOT_REVIEWED
+  UNDER_REVIEW
+  REVISION_REQUESTED
+  ACCEPTED
+  REJECTED
+  PUBLISHED
+}
+
+enum IdentifierType {
+  PAID // P/A Identifier (local, always minted)
+  DOI  // formal DOI (only via Crossref / DataCite adapters)
+}
+
+// Lifecycle of an identifier. `local` = P/A Identifier issued & usable now.
+// DOI identifiers move reserved -> pending -> registered, or -> failed.
+enum IdentifierStatus {
+  LOCAL
+  RESERVED
+  PENDING
+  REGISTERED
+  FAILED
+}
+
+enum ReviewAssignmentStatus {
+  ASSIGNED
+  ACCEPTED
+  DECLINED
+  COMPLETED
+  CANCELLED
+}
+
+enum ReviewRecommendation {
+  NONE
+  ACCEPT
+  MINOR_REVISION
+  MAJOR_REVISION
+  REJECT
+}
+
+enum RelationType {
+  REVIEWS
+  IS_REVIEWED_BY
+  IS_NEW_VERSION_OF
+  IS_PREVIOUS_VERSION_OF
+  CITES
+  IS_SUPPLEMENT_TO
+  IS_SUPPLEMENTED_BY
+  CORRECTS
+  IS_CORRECTED_BY
+}
+
+enum NoticeType {
+  CORRECTION
+  RETRACTION
+  WITHDRAWAL
+}
+
+enum AuditAction {
+  USER_REGISTER
+  USER_ROLE_CHANGE
+  RECORD_CREATE
+  METADATA_UPDATE
+  FILE_UPLOAD
+  FILE_REPLACE
+  FILE_DELETE
+  VERSION_CREATE
+  PUBLISH
+  UNPUBLISH
+  REVIEW_ASSIGNMENT
+  REVIEW_SUBMISSION
+  REVIEW_STATUS_CHANGE
+  IDENTIFIER_GENERATION
+  DOI_REGISTRATION
+  DOI_REGISTRATION_FAILED
+  CORRECTION
+  RETRACTION
+  WITHDRAWAL
+  DOWNLOAD
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  emailVerified  DateTime?
+  name           String?
+  passwordHash   String?
+  role           Role     @default(SUBMITTER)
+  orcid          String?
+  affiliation    String?
+  organizationId String?
+  disabled       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization       Organization?      @relation(fields: [organizationId], references: [id])
+  submittedRecords   Record[]           @relation("RecordSubmitter")
+  reviewAssignments  ReviewAssignment[] @relation("ReviewAssignee")
+  assignmentsMade    ReviewAssignment[] @relation("ReviewAssigner")
+  peerReviews        PeerReview[]       @relation("ReviewAuthor")
+  auditLogs          AuditLog[]
+  sessions           Session[]
+  accounts           Account[]
+
+  @@index([role])
+  @@map("users")
+}
+
+// NextAuth adapter tables (kept for future OAuth / ORCID login).
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  shortName String?
+  rorId     String?  @unique
+  type      String   @default("institution") // institution | publisher | funder | repository
+  homepage  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users   User[]
+  records Record[]
+
+  @@map("organizations")
+}
+
+// ---------------------------------------------------------------------------
+// Records — a Record is the *concept* (stable identity); RecordVersion holds
+// the metadata + files for one version. The concept keeps its PAID forever.
+// ---------------------------------------------------------------------------
+
+model Record {
+  id            String       @id @default(cuid())
+  paidNumber    Int          @unique // the NNNNNN part; allocated transactionally, never reused
+  paidYear      Int // the YYYY part, fixed at first publish (or creation year for drafts)
+  status        RecordStatus @default(DRAFT)
+  category      String // top-level subject category slug
+  publicationType PublicationType @default(OTHER)
+  peerReviewStatus PeerReviewStatus @default(NOT_REVIEWED)
+
+  submitterId    String
+  organizationId String?
+
+  currentVersionId String? @unique // points at the latest PUBLISHED version (or latest draft pre-publish)
+
+  firstPublishedAt DateTime?
+  lastPublishedAt  DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  submitter      User             @relation("RecordSubmitter", fields: [submitterId], references: [id])
+  organization   Organization?    @relation(fields: [organizationId], references: [id])
+  currentVersion RecordVersion?   @relation("CurrentVersion", fields: [currentVersionId], references: [id])
+  versions       RecordVersion[]  @relation("RecordVersions")
+  identifiers    Identifier[]
+  reviewAssignments ReviewAssignment[]
+  peerReviews    PeerReview[]
+  notices        RecordNotice[]
+  downloadEvents DownloadEvent[]
+  relationsFrom  Relationship[]   @relation("RelationSource")
+  relationsTo    Relationship[]   @relation("RelationTarget")
+
+  @@index([status])
+  @@index([category])
+  @@index([publicationType])
+  @@index([paidYear])
+  @@map("records")
+}
+
+model RecordVersion {
+  id           String       @id @default(cuid())
+  recordId     String
+  versionNumber Int // 1, 2, 3 ...
+  versionLabel String // "v1", "v2" ... (or author-supplied semantic version)
+  state        VersionState @default(DRAFT)
+
+  // --- descriptive metadata -------------------------------------------
+  title           String
+  subtitle        String?
+  abstract        String       @db.Text
+  keywords        String[]     @default([])
+  language        String       @default("en") // BCP-47
+  publicationType PublicationType @default(OTHER)
+  licenseId       String?
+  publicationDate DateTime?     // author-declared publication date
+  references      String        @db.Text @default("") // free-text or newline-delimited
+  relatedIdentifiers Json       @default("[]") // [{ identifier, type, relation }]
+  funding         Json          @default("[]") // [{ funder, awardNumber, awardTitle }]
+  conflictOfInterest String     @db.Text @default("")
+  ethicsStatement String        @db.Text @default("")
+  notes           String        @db.Text @default("")
+
+  publishedAt DateTime?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  record       Record          @relation("RecordVersions", fields: [recordId], references: [id], onDelete: Cascade)
+  currentOf    Record?         @relation("CurrentVersion")
+  license      License?        @relation(fields: [licenseId], references: [id])
+  files        FileObject[]
+  recordAuthors RecordAuthor[]
+  identifiers  Identifier[]
+
+  @@unique([recordId, versionNumber])
+  @@index([state])
+  @@index([title])
+  @@map("record_versions")
+}
+
+model Author {
+  id          String   @id @default(cuid())
+  familyName  String?
+  givenName   String?
+  fullName    String // canonical display name; always populated
+  orcid       String?
+  affiliation String?
+  createdAt   DateTime @default(now())
+
+  recordAuthors RecordAuthor[]
+
+  @@index([orcid])
+  @@index([fullName])
+  @@map("authors")
+}
+
+model RecordAuthor {
+  id              String  @id @default(cuid())
+  recordVersionId String
+  authorId        String
+  position        Int
+  isCorresponding Boolean @default(false)
+  affiliationOverride String?
+
+  recordVersion RecordVersion @relation(fields: [recordVersionId], references: [id], onDelete: Cascade)
+  author        Author        @relation(fields: [authorId], references: [id])
+
+  @@unique([recordVersionId, position])
+  @@index([authorId])
+  @@map("record_authors")
+}
+
+// ---------------------------------------------------------------------------
+// Files
+// ---------------------------------------------------------------------------
+
+model FileObject {
+  id              String  @id @default(cuid())
+  recordVersionId String
+  storageProvider String // local | s3 | vercel-blob (provider at time of write)
+  storageKey      String // opaque key within the provider
+  downloadUrl     String? // absolute URL if provider serves directly (blob / s3+cdn)
+  originalName    String
+  contentType     String
+  byteSize        Int
+  checksumSha256  String?
+  label           String? // "Manuscript", "Supplementary data", ...
+  isPrimary       Boolean @default(false)
+  supersededById  String? @unique // set when replaced; old rows are kept, never overwritten
+  uploadedById    String?
+  createdAt       DateTime @default(now())
+
+  recordVersion RecordVersion   @relation(fields: [recordVersionId], references: [id], onDelete: Cascade)
+  supersededBy  FileObject?     @relation("FileSupersede", fields: [supersededById], references: [id])
+  supersedes    FileObject?     @relation("FileSupersede")
+  downloadEvents DownloadEvent[]
+
+  @@index([recordVersionId])
+  @@map("files")
+}
+
+// ---------------------------------------------------------------------------
+// Identifiers — PAID always; DOI only through a configured provider.
+// ---------------------------------------------------------------------------
+
+model Identifier {
+  id              String           @id @default(cuid())
+  type            IdentifierType
+  value           String           @unique // "PAID:2026:000001" or "10.12345/pa.2026.000001"
+  status          IdentifierStatus
+  provider        String           @default("local") // local | crossref | datacite
+  recordId        String
+  recordVersionId String?
+  isPrimary       Boolean          @default(false)
+  registeredAt    DateTime?
+  lastAttemptAt   DateTime?
+  attemptCount    Int              @default(0)
+  lastError       String?          @db.Text
+  providerResponse Json?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  record        Record         @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  recordVersion RecordVersion? @relation(fields: [recordVersionId], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([status])
+  @@index([recordId])
+  @@map("identifiers")
+}
+
+// Monotonic PAID allocation. One row per allocation; the autoincrement PK is
+// the PAID number. Rows are never deleted, so numbers are never reused.
+model PaidAllocation {
+  number     Int      @id @default(autoincrement())
+  recordId   String?  @unique
+  year       Int
+  allocatedAt DateTime @default(now())
+
+  @@map("paid_allocations")
+}
+
+// ---------------------------------------------------------------------------
+// Relationships between records (and to external identifiers)
+// ---------------------------------------------------------------------------
+
+model Relationship {
+  id               String       @id @default(cuid())
+  sourceRecordId   String
+  targetRecordId   String?
+  targetIdentifier String? // external identifier when target is not in this archive
+  relationType     RelationType
+  note             String?
+  createdById      String?
+  createdAt        DateTime     @default(now())
+
+  sourceRecord Record  @relation("RelationSource", fields: [sourceRecordId], references: [id], onDelete: Cascade)
+  targetRecord Record? @relation("RelationTarget", fields: [targetRecordId], references: [id], onDelete: SetNull)
+
+  @@index([sourceRecordId])
+  @@index([targetRecordId])
+  @@map("relationships")
+}
+
+// ---------------------------------------------------------------------------
+// Peer review
+// ---------------------------------------------------------------------------
+
+model ReviewAssignment {
+  id           String                 @id @default(cuid())
+  recordId     String
+  reviewerId   String
+  assignedById String
+  status       ReviewAssignmentStatus @default(ASSIGNED)
+  dueAt        DateTime?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  record     Record @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  reviewer   User   @relation("ReviewAssignee", fields: [reviewerId], references: [id])
+  assignedBy User   @relation("ReviewAssigner", fields: [assignedById], references: [id])
+  review     PeerReview?
+
+  @@unique([recordId, reviewerId])
+  @@index([reviewerId])
+  @@map("review_assignments")
+}
+
+model PeerReview {
+  id             String               @id @default(cuid())
+  recordId       String
+  assignmentId   String?              @unique
+  reviewerId     String
+  recommendation ReviewRecommendation @default(NONE)
+  body           String               @db.Text
+  confidential   String               @db.Text @default("") // notes to editor only
+  isPublic       Boolean              @default(false)
+  // When an editor promotes a review to a citable record of its own:
+  reviewRecordId String?              @unique
+  submittedAt    DateTime             @default(now())
+
+  record         Record            @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  assignment     ReviewAssignment? @relation(fields: [assignmentId], references: [id])
+  reviewer       User              @relation("ReviewAuthor", fields: [reviewerId], references: [id])
+
+  @@index([recordId])
+  @@map("peer_reviews")
+}
+
+// ---------------------------------------------------------------------------
+// Licenses
+// ---------------------------------------------------------------------------
+
+model License {
+  id        String  @id @default(cuid())
+  code      String  @unique // "CC-BY-4.0", "CC0-1.0", "MIT", "arr" ...
+  name      String
+  url       String?
+  isOpen    Boolean @default(true)
+  sortOrder Int     @default(100)
+
+  versions RecordVersion[]
+
+  @@map("licenses")
+}
+
+// ---------------------------------------------------------------------------
+// Notices — corrections / retractions / withdrawals. Never delete history.
+// ---------------------------------------------------------------------------
+
+model RecordNotice {
+  id          String     @id @default(cuid())
+  recordId    String
+  type        NoticeType
+  reason      String     @db.Text
+  detailsUrl  String?
+  createdById String?
+  createdAt   DateTime   @default(now())
+
+  record Record @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@index([recordId])
+  @@map("record_notices")
+}
+
+// ---------------------------------------------------------------------------
+// Audit + analytics
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  action     AuditAction
+  actorId    String?
+  targetType String // "record" | "record_version" | "file" | "user" | "identifier" | "review"
+  targetId   String?
+  summary    String
+  metadata   Json?
+  ipHash     String?
+  createdAt  DateTime    @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([action])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model DownloadEvent {
+  id        String   @id @default(cuid())
+  fileId    String
+  recordId  String
+  ipHash    String?
+  userAgent String?
+  referer   String?
+  createdAt DateTime @default(now())
+
+  file   FileObject @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  record Record     @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@index([fileId])
+  @@index([recordId])
+  @@index([createdAt])
+  @@map("download_events")
+}
+
+// Named counters (e.g. reserved for future sequences). PAID uses PaidAllocation.
+model Counter {
+  name  String @id
+  value Int    @default(0)
+
+  @@map("counters")
+}

@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: #ffffff;
+  color: #111111;
+  font-feature-settings: "kern";
+  text-rendering: optimizeLegibility;
+}
+
+@layer base {
+  h1, h2, h3, h4 {
+    @apply font-semibold text-ink;
+    letter-spacing: -0.01em;
+  }
+  a {
+    @apply text-navy;
+  }
+  a:hover {
+    @apply text-navy-light underline;
+  }
+  ::selection {
+    background: #0f2f5f;
+    color: #ffffff;
+  }
+}
+
+@layer components {
+  .container-page {
+    @apply mx-auto w-full max-w-page px-4 sm:px-6;
+  }
+  .prose-academic {
+    @apply text-[15px] leading-7 text-ink-soft;
+  }
+  .prose-academic p {
+    @apply my-3;
+  }
+  .field-label {
+    @apply block text-sm font-medium text-ink mb-1;
+  }
+  .field-hint {
+    @apply text-xs text-ink-faint mt-1;
+  }
+  .input {
+    @apply w-full rounded-sm border border-rule bg-white px-3 py-2 text-sm text-ink
+      outline-none focus:border-navy focus:ring-1 focus:ring-navy;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center rounded-sm border px-3.5 py-2 text-sm
+      font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply border-navy bg-navy text-white hover:bg-navy-dark;
+  }
+  .btn-secondary {
+    @apply border-rule bg-white text-ink hover:bg-panel;
+  }
+  .btn-danger {
+    @apply border-danger bg-white text-danger hover:bg-danger hover:text-white;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide;
+  }
+  .badge-review {
+    @apply border-ok/40 bg-ok/10 text-ok;
+  }
+  .badge-paid {
+    @apply border-navy/30 bg-navy/5 text-navy;
+  }
+  .badge-doi {
+    @apply border-ink/30 bg-panel text-ink-soft;
+  }
+  .badge-warn {
+    @apply border-warn/40 bg-warn/10 text-warn;
+  }
+  .badge-danger {
+    @apply border-danger/40 bg-danger/10 text-danger;
+  }
+  .card {
+    @apply rounded-sm border border-rule bg-white;
+  }
+  .table-academic {
+    @apply w-full border-collapse text-sm;
+  }
+  .table-academic th {
+    @apply border-b border-ink px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted;
+  }
+  .table-academic td {
+    @apply border-b border-rule px-2 py-1.5 align-top;
+  }
+}
