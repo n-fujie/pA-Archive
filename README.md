@@ -8,6 +8,18 @@ registry** for **P/A Institute**.
 - **Planned URL:** `https://archive.platodesignlab.com`
 - **Parent domain:** `platodesignlab.com`
 
+### Production status
+
+> **Not yet deployed.** The codebase is production‑ready and fully verified
+> locally (tests, build, lint, HTTP smoke test — see [Tests](#tests)), but the
+> live Vercel project, production database, object store, custom domain and
+> first admin have **not** been created — those steps require the operator's
+> Vercel/DNS access. Follow [§7 Production Deployment (runbook)](#7-production-deployment-runbook)
+> and [§8 launch checklist](#8-production-launch-checklist).
+>
+> Once live, this line becomes:
+> `Production: https://archive.platodesignlab.com` — and not before.
+
 P/A Archive lets researchers deposit scholarly works, generates a public landing
 page for each, and assigns a **permanent identifier**. It is a standalone
 application (its own Vercel project / database / storage), not a page bolted onto
@@ -342,6 +354,7 @@ production — use `npm run create-admin` there instead.
 | `npm run db:push` | Push schema without a migration (**prototyping only, never prod**) |
 | `npm run db:seed` | Run `prisma/seed.ts` (licenses always; demo data gated) |
 | `npm run create-admin` | Create/promote the first ADMIN safely (see Production runbook) |
+| `npm run check-env` | Preflight: validate a production env for consistency & safety (connects to nothing) |
 | `npm run backfill-checksums` | Compute + store SHA-256 for file rows missing one (`-- --dry` to preview) |
 | `npm run smoke:prod` | HTTP end-to-end smoke test against `SMOKE_BASE_URL` |
 | `npm run prisma:studio` | Prisma Studio |
@@ -478,72 +491,130 @@ End-to-end procedure to take P/A Archive live at
 
 ### 7.2 Database
 
-1. Create the database (empty). Enable **daily backups** and **point-in-time
-   recovery** if the provider offers it.
-2. Collect `DATABASE_URL` (pooled, for the app) and `DIRECT_DATABASE_URL`
-   (direct/non-pooled, for migrations — required by Neon/Supabase pgbouncer).
-3. Apply the schema **with migrations, not `db push`**:
+**Provider choice** — any PostgreSQL 14+ works (no code change). Recommended,
+in order:
+
+| Rank | Provider | Why | Watch for |
+|---|---|---|---|
+| 1 | **Neon** | Serverless, scales to zero, generous free tier, first‑class Prisma support, PITR on paid plans. Add via the Vercel **Marketplace** so billing + env vars are managed by Vercel. | Use the **pooled** URL (`...-pooler...`) for `DATABASE_URL` and the **direct** URL for `DIRECT_DATABASE_URL`. |
+| 2 | **Supabase** | Managed Postgres + daily backups + PITR (Pro), also on the Vercel Marketplace. | `DATABASE_URL` = the `:6543` transaction‑pooler URI; `DIRECT_DATABASE_URL` = the `:5432` URI. |
+| 3 | **Vercel Postgres** (Neon under the hood) | Zero‑config from the Vercel dashboard. | Same pooled/direct split as Neon. |
+| 4 | Any other Postgres (RDS, Railway, self‑hosted) | Full control. | You own backups/PITR; set both URLs; ensure connection limits suit serverless. |
+
+**Serverless connection management:** the app uses a single cached
+`PrismaClient` (`lib/db.ts`). Always point `DATABASE_URL` at the provider's
+**pooled/pgbouncer** endpoint so concurrent lambda invocations don't exhaust
+connections. `DIRECT_DATABASE_URL` (non‑pooled) is used **only** by
+`prisma migrate` and is required whenever the pooled URL runs through pgbouncer.
+
+**Steps**
+
+1. Create the database (empty). Enable **daily automated backups** and
+   **point‑in‑time recovery (PITR)** if the plan offers it.
+2. Collect the **pooled** URL → `DATABASE_URL`, and the **direct** URL →
+   `DIRECT_DATABASE_URL`.
+3. Apply the schema **with migrations, never `db push`**:
    ```bash
-   DATABASE_URL='<direct or pooled>' DIRECT_DATABASE_URL='<direct>' \
+   DATABASE_URL='<direct>' DIRECT_DATABASE_URL='<direct>' \
      npx prisma migrate deploy
    ```
-   Run this once now, and again on every deploy that adds a migration
-   (`git log --stat prisma/migrations` to see if there is one). The Vercel build
-   runs `prisma generate` **only** — it never touches your data.
-4. Seed reference data (licenses). This creates **no** users or sample record in
+   Two migrations should apply: `..._init` and
+   `..._production_hardening_audit_actions`. Re‑run this on every deploy that
+   adds a migration (`git log --stat prisma/migrations`). The Vercel build runs
+   `prisma generate` **only** — it never touches data.
+4. Seed reference data (licenses). Creates **no** users or sample record in
    production:
    ```bash
    DATABASE_URL='<pooled>' NODE_ENV=production npm run db:seed
    ```
+   Verify:
+   ```bash
+   DATABASE_URL='<pooled>' npx prisma studio   # users: 0, records: 0, licenses: 7
+   ```
 
 ### 7.3 Object storage
 
-- **Vercel Blob:** create a Blob store in the Vercel dashboard and link it to the
-  project — `BLOB_READ_WRITE_TOKEN` is injected automatically. Set
-  `STORAGE_PROVIDER=vercel-blob`.
-- **S3 / R2:** create a **private** bucket. Set `STORAGE_PROVIDER=s3`, the four
-  `S3_*` credentials (+ `S3_ENDPOINT` for non-AWS), and add the optional
-  dependency: `npm i @aws-sdk/client-s3`. Optionally set `S3_PUBLIC_BASE_URL` to
-  a CDN in front of the bucket.
-- Do **not** use `STORAGE_PROVIDER=local` on Vercel — `getStorage()` throws at
-  runtime in production unless `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true` (only for
-  a self-hosted box with a persistent volume).
+**Recommended for launch: Vercel Blob** (fastest path; `@vercel/blob` is already
+a dependency).
+
+1. Vercel dashboard → **Storage → Create → Blob** → connect it to the
+   `pa-archive` project.
+2. `BLOB_READ_WRITE_TOKEN` is then injected automatically into every environment.
+3. Set `STORAGE_PROVIDER=vercel-blob`.
+
+If the token is absent, **there is no local fallback** — `getStorage()` throws
+`"STORAGE_PROVIDER=vercel-blob but no Blob store is linked…"` and uploads fail
+with a clear configuration error (verified by `scripts/check-env.ts` and the
+`storage-config` unit test).
+
+**Alternative: S3 / Cloudflare R2 / Backblaze B2**
+
+1. Create a **private** bucket.
+2. `npm i @aws-sdk/client-s3` (optional dependency).
+3. Set `STORAGE_PROVIDER=s3` + `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`,
+   `S3_SECRET_ACCESS_KEY` (+ `S3_ENDPOINT` for non‑AWS, `S3_PUBLIC_BASE_URL` for a
+   CDN). Missing values → clear error listing exactly which `S3_*` vars are unset.
+
+**Never** `STORAGE_PROVIDER=local` on Vercel — `getStorage()` throws in
+production unless `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true` (self‑hosted box with a
+persistent volume only).
 
 ### 7.4 Environment variables (Vercel → Settings → Environment Variables)
 
-Set for **Production** (and Preview if you use preview deploys):
+Set for the **Production** environment (Preview handling: see §7.12):
 
 ```
 NEXT_PUBLIC_SITE_URL   = https://archive.platodesignlab.com
 APP_URL                = https://archive.platodesignlab.com
 AUTH_URL               = https://archive.platodesignlab.com
 AUTH_TRUST_HOST        = true
-AUTH_SECRET            = <openssl rand -base64 32>
+AUTH_SECRET            = <openssl rand -base64 48>          # unique to production
 DATABASE_URL           = <pooled Postgres URL>
-DIRECT_DATABASE_URL    = <direct Postgres URL>            # if provider needs it
-STORAGE_PROVIDER       = vercel-blob                       # or s3
+DIRECT_DATABASE_URL    = <direct Postgres URL>              # Neon/Supabase: required
+STORAGE_PROVIDER       = vercel-blob                        # or s3
+BLOB_READ_WRITE_TOKEN  = <auto-injected once a Blob store is linked>
 # (s3 only) S3_REGION, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_ENDPOINT
 DOI_PROVIDER           = local                             # until a registrar is signed (see §6)
-ALLOW_OPEN_SIGNUP      = true                              # or false to require admin-created accounts
+ALLOW_OPEN_SIGNUP      = false                             # RECOMMENDED for launch — see below
 RATE_LIMIT_ENABLED     = true
 TRUST_PROXY_HEADERS    = true
 ```
 
-Do **not** set any `SEED_*` variable in production. Set `INITIAL_ADMIN_*` only
-temporarily for step 7.6.
+- **`ALLOW_OPEN_SIGNUP=false` is the recommended launch value.** It disables
+  public self‑registration (`/register` returns 404, the register action
+  refuses) so only an admin creates accounts during the closed beta. Flip it to
+  `true` after you've reviewed the rate‑limit scaling note in §7.13.
+- **Do not** set in production: `SEED_DEMO_USERS`, `SEED_DEFAULT_PASSWORD`,
+  `SEED_SAMPLE_RECORD`, `ALLOW_LOCAL_STORAGE_IN_PRODUCTION`.
+- `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD` only temporarily for §7.6,
+  then delete them.
 
-Generate the secret:
+Generate the auth secret (do **not** commit the value):
 ```bash
-openssl rand -base64 32
+openssl rand -base64 48
 ```
+
+**Preflight** — with the exact production env sourced locally
+(`vercel env pull .env.production.local` then export it):
+```bash
+NODE_ENV=production npm run check-env
+```
+This validates URL/origin consistency, storage config, the DOI prefix format,
+and that no dev‑only var is set. It connects to nothing. Exit 0 = ready.
 
 ### 7.5 Deploy
 
-1. Push the repo; import it in Vercel as a **new project**. Root directory = repo
-   root, framework = Next.js (auto), build command = `npm run build` (default).
-2. Trigger the first deployment.
-3. After it succeeds, re-run `prisma migrate deploy` against production if you
-   have not yet (step 7.2.3).
+1. Push the repo; **Vercel → Add New → Project → import the repo**.
+   - Project name: `pa-archive`
+   - Root directory: repo root
+   - Framework: **Next.js** (auto‑detected; also pinned in `vercel.json`)
+   - Build command: `npm run build` (default; `vercel.json` pins it — it runs
+     `prisma generate` + `next build`, **never a migration**)
+   - Production branch: `main`
+2. Add the environment variables (§7.4) to **Production**, then trigger the
+   first deployment.
+3. After it succeeds, run `prisma migrate deploy` against the production DB if
+   you have not already (§7.2 step 3). Migrations are **never** run by the build.
 
 ### 7.6 Create the first administrator
 
@@ -655,6 +726,46 @@ LOCKSS / CLOCKSS / Portico integration is **not implemented** (see §2).
   renames a column/table.**
 - After any rollback, re-run `npm run smoke:prod`.
 
+### 7.12 Preview vs Production isolation
+
+Vercel builds a **Preview** deployment for every non‑`main` branch/PR. Preview
+must **never** touch production data:
+
+- **Separate database for Preview.** Set `DATABASE_URL` / `DIRECT_DATABASE_URL`
+  for the **Preview** environment to a *different* database (Neon and Supabase
+  both offer free branch/dev databases; Neon can auto‑create a branch DB per
+  Vercel preview). Never leave Preview pointing at the production URL.
+- **Separate Blob store (or accept shared read‑only risk).** Ideally create a
+  second Blob store for Preview. At minimum, know that a Preview deploy with the
+  production token can write to the production store.
+- **Separate `AUTH_SECRET`** for Preview so preview sessions never validate
+  against production.
+- `NEXT_PUBLIC_SITE_URL` / `APP_URL` / `AUTH_URL` for Preview can be left unset
+  (they fall back to `http://localhost:3000` locally) or set to the Vercel
+  preview URL — they are only used for canonical links, which don't matter on a
+  throwaway preview.
+- If you cannot provision a preview database, **disable Preview deployments**
+  for this project (Vercel → Settings → Git → *Preview Deployments: off*, or the
+  `git.deploymentEnabled` block in `vercel.json` already limits auto‑deploys to
+  `main`).
+
+The migration workflow is manual (`prisma migrate deploy`), so a preview build
+**cannot** alter any schema on its own — the only risk is row‑level writes if
+Preview shares the production `DATABASE_URL`, which the above prevents.
+
+### 7.13 Rate limiting — production beta limitation
+
+`lib/rate-limit.ts` is an **in‑process fixed‑window limiter**. On Vercel each
+serverless instance keeps its own counters, so the effective global limit is
+`limit × concurrent instances`. This is acceptable for a **closed / low‑traffic
+beta** (and login is additionally limited *per email*, which is instance‑local
+but still meaningfully slows credential stuffing against one account).
+
+**Before enabling open public signup (`ALLOW_OPEN_SIGNUP=true`)**, move the
+limiter to a shared store — Upstash Redis or Vercel KV — by replacing the `store`
+Map in `lib/rate-limit.ts` with a Redis‑backed implementation of the same
+`rateLimit()` signature. This does not block the initial beta deployment.
+
 ---
 
 ## 8. Production launch checklist
@@ -662,33 +773,40 @@ LOCKSS / CLOCKSS / Portico integration is **not implemented** (see §2).
 Copy this into your launch ticket. Every box must be checked.
 
 ```
+Preflight
+[ ] NODE_ENV=production npm run check-env — exit 0 with the real prod env
+[ ] vercel.json present (framework nextjs, build = npm run build, no migration in build)
+
 Security & secrets
-[ ] AUTH_SECRET is a fresh 32-byte random value, stored only in Vercel + a password manager
+[ ] AUTH_SECRET is a fresh `openssl rand -base64 48` value, unique to production, stored only in Vercel + a password manager
 [ ] No secret appears in the repo, README, seed, tests, or client bundle
-[ ] APP_URL / NEXT_PUBLIC_SITE_URL / AUTH_URL all = https://archive.platodesignlab.com
+[ ] APP_URL / NEXT_PUBLIC_SITE_URL / AUTH_URL all = https://archive.platodesignlab.com (no *.vercel.app)
 [ ] Security headers verified on prod (CSP, HSTS, X-Frame-Options: DENY, Referrer-Policy)
 [ ] Session cookie is __Secure- prefixed, HttpOnly, SameSite=Lax on prod
 [ ] RATE_LIMIT_ENABLED=true ; TRUST_PROXY_HEADERS=true
 [ ] Cross-origin POST to /api/records returns 403 (CSRF check)
 
 Accounts
-[ ] No demo accounts exist in production (admin@pa.archive etc. absent)
+[ ] No demo accounts exist in production (admin@pa.archive etc. absent — verify via prisma studio / SQL)
 [ ] SEED_DEMO_USERS / SEED_SAMPLE_RECORD / SEED_DEFAULT_PASSWORD are NOT set in prod
-[ ] First ADMIN created via `npm run create-admin`; INITIAL_ADMIN_PASSWORD then unset
-[ ] ALLOW_OPEN_SIGNUP set intentionally (true = open submitter signup)
+[ ] First ADMIN created via `npm run create-admin`; INITIAL_ADMIN_EMAIL/PASSWORD then removed from the env
+[ ] Admin can log in and open /admin; a non-admin gets /403
+[ ] ALLOW_OPEN_SIGNUP=false for launch (flip to true only after the §7.13 rate-limit move)
 
 Database
-[ ] Schema applied with `prisma migrate deploy` (never `db push`)
-[ ] Licenses seeded (NODE_ENV=production npm run db:seed)
-[ ] DATABASE_URL is the POOLED string; DIRECT_DATABASE_URL set if provider needs it
-[ ] Daily automated backups enabled; PITR enabled if available
+[ ] Schema applied with `prisma migrate deploy` (never `db push`) — both migrations applied
+[ ] Licenses seeded (NODE_ENV=production npm run db:seed) → users 0, records 0, licenses 7
+[ ] DATABASE_URL is the POOLED string; DIRECT_DATABASE_URL is the DIRECT string
+[ ] Daily automated backups enabled; PITR enabled if the plan offers it
 [ ] A restore has been tested into a scratch DB
 [ ] PAID concurrency verified (npm run smoke:prod publishes cleanly)
+[ ] Preview environment uses a SEPARATE database (or Preview deploys are disabled)
 
 Storage
-[ ] STORAGE_PROVIDER = vercel-blob or s3 (NOT local)
+[ ] STORAGE_PROVIDER = vercel-blob (Blob store linked → BLOB_READ_WRITE_TOKEN injected) or s3
+[ ] STORAGE_PROVIDER is NOT local ; ALLOW_LOCAL_STORAGE_IN_PRODUCTION unset
 [ ] Bucket/store is private; credentials scoped to it
-[ ] Secondary backup/replication of the object store configured
+[ ] Secondary backup/replication of the object store configured (or accepted as a known gap)
 [ ] Upload limits confirmed (MAX_UPLOAD_BYTES); executable types rejected
 
 Public / private boundary
@@ -708,13 +826,20 @@ Domain / TLS
 [ ] HTTPS valid: curl -sI shows HTTP/2 200 + strict-transport-security
 [ ] Redeployed after setting the production URLs
 
+DOI (until a registrar is signed)
+[ ] DOI_PROVIDER=local ; DOI_PREFIX unset
+[ ] Publish one real record → PAID issued, and NO doi appears on the record page,
+    citation_doi, JSON-LD, BibTeX, RIS, or Schema.org
+[ ] Record page shows "No registered DOI. Cite the P/A Identifier…"
+
 Verification
 [ ] npm test — all pass
 [ ] npx tsc --noEmit — clean
 [ ] npm run build — succeeds
 [ ] npm run lint — clean
-[ ] npm run smoke:prod against production/staging — all pass
+[ ] npm run smoke:prod against the deployment — all 28 pass
 [ ] /api/health returns ok with no version/internal details
+[ ] README "Production status" updated to `Production: https://archive.platodesignlab.com`
 ```
 
 ---

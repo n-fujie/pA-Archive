@@ -6,6 +6,20 @@ import type {
   StorageDriver,
 } from "./types";
 
+/** Throws when s3 is selected but not fully configured. */
+export function assertS3Configured(): void {
+  const missing: string[] = [];
+  if (!env.s3.bucket) missing.push("S3_BUCKET");
+  if (!env.s3.accessKeyId) missing.push("S3_ACCESS_KEY_ID");
+  if (!env.s3.secretAccessKey) missing.push("S3_SECRET_ACCESS_KEY");
+  if (missing.length) {
+    throw new Error(
+      `STORAGE_PROVIDER=s3 but missing: ${missing.join(", ")}. ` +
+        "Set the S3_* credentials (and S3_ENDPOINT for non-AWS providers).",
+    );
+  }
+}
+
 /**
  * S3 / S3-compatible driver (AWS S3, Cloudflare R2, MinIO, Backblaze B2...).
  *

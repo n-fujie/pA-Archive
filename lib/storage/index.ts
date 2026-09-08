@@ -7,7 +7,8 @@ import {
 } from "@/lib/constants";
 import { LocalStorageDriver } from "./local";
 import { S3StorageDriver } from "./s3";
-import { VercelBlobStorageDriver } from "./vercel-blob";
+import { VercelBlobStorageDriver, assertVercelBlobConfigured } from "./vercel-blob";
+import { assertS3Configured } from "./s3";
 import type { StorageDriver } from "./types";
 
 export * from "./types";
@@ -19,9 +20,11 @@ export function getStorage(): StorageDriver {
   assertStorageSafeForRuntime();
   switch (env.storageProvider) {
     case "s3":
+      assertS3Configured();
       driver = new S3StorageDriver();
       break;
     case "vercel-blob":
+      assertVercelBlobConfigured();
       driver = new VercelBlobStorageDriver();
       break;
     default:
