@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getSessionUser } from "@/lib/auth/guards";
 import { hasRole } from "@/lib/auth/guards";
 import { site } from "@/lib/site";
+import { Logo } from "./logo";
 import { SignOutButton } from "./sign-out-button";
 
 export async function SiteHeader() {
@@ -10,9 +11,14 @@ export async function SiteHeader() {
   return (
     <header className="border-b border-ink">
       <div className="container-page flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-baseline gap-3">
-          <Link href="/" className="text-lg font-semibold text-ink no-underline hover:no-underline">
-            {site.name}
+        <div className="flex items-center gap-2.5">
+          <Link
+            href="/"
+            aria-label={`${site.name} — home`}
+            className="flex items-center gap-2.5 text-ink no-underline hover:no-underline"
+          >
+            <Logo className="h-9 w-9 shrink-0 text-ink" />
+            <span className="text-lg font-semibold leading-none">{site.name}</span>
           </Link>
           <span className="hidden text-xs text-ink-faint sm:inline">
             {site.operator}

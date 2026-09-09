@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { site } from "@/lib/site";
 import { identifierProviderStatus } from "@/lib/identifiers";
+import { Logo } from "./logo";
 
 const legal = [
   ["About", "/about"],
@@ -20,8 +21,11 @@ export function SiteFooter() {
     <footer className="mt-16 border-t border-ink">
       <div className="container-page grid gap-6 py-8 text-sm sm:grid-cols-3">
         <div>
-          <div className="font-semibold text-ink">{site.name}</div>
-          <p className="mt-1 max-w-prose text-xs text-ink-muted">
+          <div className="flex items-center gap-2">
+            <Logo className="h-6 w-6 text-ink" />
+            <span className="font-semibold text-ink">{site.name}</span>
+          </div>
+          <p className="mt-2 max-w-prose text-xs text-ink-muted">
             {site.description}
           </p>
           <p className="mt-2 text-xs text-ink-faint">

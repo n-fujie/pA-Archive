@@ -1,0 +1,7 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="P/A">
+  <path d="M150 25.2 A106 106 0 1 0 129 231" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>
+  <path d="M231.5 150 A106 106 0 0 1 200 200" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>
+  <circle cx="150" cy="25.2" r="8.5" fill="currentColor"/>
+  <circle cx="129" cy="231" r="8.5" fill="currentColor"/>
+  <text x="128" y="160" text-anchor="middle" font-family="Georgia, 'Times New Roman', 'Noto Serif JP', serif" font-size="98" font-weight="500" letter-spacing="-2" fill="currentColor">P/A</text>
+</svg>

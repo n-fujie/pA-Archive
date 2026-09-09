@@ -1,0 +1,7 @@
+<svg width="32" height="32" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="256" height="256" fill="#ffffff"/>
+  <path d="M150 32 A98 98 0 1 0 130 224" stroke="#111111" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="150" cy="32" r="13" fill="#111111"/>
+  <circle cx="130" cy="224" r="13" fill="#111111"/>
+  <text x="128" y="160" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="104" font-weight="600" letter-spacing="-2" fill="#111111">P/A</text>
+</svg>
