@@ -119,3 +119,106 @@ export const FALSIFIABILITY_MARKERS = [
   "would be falsified", "would disconfirm", "if instead", "a counterexample would be",
   "this prediction fails if", "would rule out", "we would expect to see", "otherwise our model predicts",
 ];
+
+// ---------------------------------------------------------------------------
+// Stage 15 — Straw-Man Risk / Target Understanding Audit
+// ---------------------------------------------------------------------------
+
+/** Markers that the document is CRITICISING a named position, not just citing it. */
+export const CRITICISM_MARKERS = [
+  "criticis", "critique", "objection to", "we reject", "we deny", "fails to",
+  "is mistaken", "is wrong", "is flawed", "cannot account for", "overlooks",
+  "ignores", "neglects", "misunderstands", "is untenable", "collapses under",
+  "does not hold", "is inadequate", "is insufficient", "is naive", "is confused",
+  "contra ", "against the view", "pace ", "problem with", "the limitation of",
+  "the weakness of", "we take issue with", "runs into difficulty", "is refuted",
+  "is a mistake", "is misguided", "breaks down", "is question-begging",
+];
+
+/** Markers of a comparative-superiority claim ("our approach is better than X"). */
+export const COMPARATIVE_SUPERIORITY_MARKERS = [
+  "unlike", "in contrast to", "superior to", "better than", "improves on",
+  "goes beyond", "avoids the problems of", "does not suffer from",
+  "whereas the standard view", "our account, by contrast", "more adequate than",
+];
+
+/** The single most serious pattern: asserting the target does not think about X.
+ *  Stage 15 must NOT reproduce this framing — it limits it to
+ *  "primary-literature confirmation is insufficient" instead. */
+export const TARGET_DOES_NOT_CONSIDER_PATTERNS: RegExp[] = [
+  /\b(?:he|she|they|the author|[A-Z][a-z]+)\s+(?:does|do|did)\s+not\s+(?:consider|address|discuss|see|realise|realize|acknowledge|recognise|recognize|notice|entertain)\b/i,
+  /\b(?:never|nowhere)\s+(?:considers|addresses|discusses|acknowledges|entertains)\b/i,
+  /\b(?:fails|failed)\s+to\s+(?:consider|address|see|recognise|recognize|acknowledge|notice)\b/i,
+  /\bis\s+(?:blind|oblivious)\s+to\b/i,
+  /\bhas\s+(?:no|not?)\s+(?:answer|response|account|reply)\s+to\b/i,
+];
+
+/** Markers that only an OLD / early formulation is being used. */
+export const OUTDATED_VERSION_MARKERS = [
+  "in his early", "in her early", "early work", "the early ", "originally argued",
+  "initially claimed", "first formulation", "1960s formulation", "1970s formulation",
+  "the young ", "before he revised", "before she revised", "in the first edition",
+  "the earlier position", "as first stated", "the initial version",
+];
+
+/** Markers that revision / limitation / self-correction by the target exists. */
+export const TARGET_REVISION_MARKERS = [
+  "later revised", "subsequently qualified", "in later work", "went on to limit",
+  "retracted", "reconsidered", "modified this view", "the mature position",
+  "he later", "she later", "in the second edition", "the revised account",
+];
+
+/** Markers of reliance on secondary literature only. */
+export const SECONDARY_SOURCE_MARKERS = [
+  "as summarised by", "as summarized by", "according to commentators",
+  "as introduced in", "the standard interpretation", "as glossed by",
+  "cited in", "quoted in", "as reported by", "in the secondary literature",
+  "introductory accounts", "as characterised by", "as characterized by",
+  "textbook presentations",
+];
+
+/** Markers that a peripheral / occasional statement is being used. */
+export const PERIPHERAL_STATEMENT_MARKERS = [
+  "in an interview", "in a lecture", "once remarked", "in passing", "an aside",
+  "a throwaway", "off the cuff", "in conversation", "reportedly said",
+  "in a footnote", "a marginal comment", "in a blog post", "on social media",
+  "a rhetorical", "merely a metaphor", "was speaking loosely",
+];
+
+/** Markers that the critic projects their OWN framework onto the target. */
+export const CRITIC_CATEGORY_PROJECTION_MARKERS = [
+  "must accept", "is committed to", "presupposes, whether he admits it or not",
+  "cannot deny that", "is forced to concede", "by our lights", "on any reasonable",
+  "obviously requires", "any serious account must", "as everyone now recognises",
+  "as everyone now recognizes",
+];
+
+/** Markers that a quotation has been cut away from its surrounding conditions. */
+export const CONTEXT_CUT_MARKERS = [
+  "…", "[...]", "[…]", "(...)", "quoted out of context", "taken in isolation",
+  "the full passage", "read in context", "the surrounding text", "elided",
+  "omits the qualification", "drops the proviso", "without the caveat",
+];
+
+/** Concessive / charitable-reading markers (their presence LOWERS straw-man risk). */
+export const CHARITABLE_READING_MARKERS = [
+  "the strongest version", "strongest form", "most charitable", "charitably",
+  "steelman", "steel-man", "on the most defensible reading", "to be fair to",
+  "at its best", "the best version of", "granting the target", "even granting",
+  "on its own terms", "reconstructed sympathetically", "principle of charity",
+];
+
+/** Markers of self-revision-oriented thinkers (recursive-critique methodology). */
+export const SELF_REVISION_METHODOLOGY_MARKERS = [
+  "self-revision", "self-correction", "recursive critique", "recursive audit",
+  "reflexive method", "revisable", "conditions of revision", "his own method",
+  "her own method", "applies to itself", "not exempt", "immanent critique",
+  "genealogical self-application", "auto-critique",
+];
+
+/** Markers that a translated technical term is in play. */
+export const TRANSLATION_MARKERS = [
+  "the German ", "the French ", "the Greek ", "the original reads", "in the original",
+  "often translated as", "my translation", "translator renders", "the standard translation",
+  "untranslatable", "usually rendered", "the term ", "which we translate as",
+];

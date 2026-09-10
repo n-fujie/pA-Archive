@@ -87,7 +87,7 @@ DOI or record link). `SUSPENDED` / `TERMINATED` / `RECLASSIFIED` and a free-text
 vocabulary (`lib/ziran/vocabulary.ts`) is stored with `revisable: true` and an
 `adoptedBecause` reason — it is explicitly not a final ontology.
 
-**The 15 stages** (`lib/research-audit/stages.ts`, `HeuristicAnalyzer`):
+**The 16 stages** (`lib/research-audit/stages.ts`, `HeuristicAnalyzer`):
 
 | # | Stage | Phase-1 implementation |
 |---|---|---|
@@ -105,11 +105,12 @@ vocabulary (`lib/ziran/vocabulary.ts`) is stored with `revisable: true` and an
 | 12 | Counterexample / counterfactual | per claim: weakening-observation / alternative-model / definitional-vs-falsifiable prompts; detects stated falsification conditions as positive |
 | 13 | Theory-mine audit | phrase patterns → over-generalisation / ontological reification / metaphor realisation / unobservable-mechanism assertion / category over-fixation / future over-specification / local→universal leap / institutional→truth; **flags are prompts, absence is not evidence of absence** |
 | 14 | Regression audit (bidirectional) | within-document hedge→strong regression; **and** a `TheoryFeedback` row (`LATEST_THEORY / OPEN`) recording that the reverse check — does this document require modifying/suspending/reclassifying the current ZS theory — **cannot be done by this layer** (it has no access to the manuscript) and is owed to a human. Fitting the document to the existing theory is explicitly not the success condition. |
-| 15 | Audit report | assembles **only the sections that fired**, plus a never-omitted "Undecided / needs investigation" roll-up |
+| 15 | Straw-man risk / target-understanding audit | **conditional** — fires only when the document criticises / rebuts / negatively evaluates / points out limitations of / claims comparative superiority over a *specific* person, theory, school, thought-system, scientific model, or research programme (`detectCriticismTargets`). Audits whether the target was reconstructed at its strongest **before** being criticised — not whether the criticism is right. See §14a. |
+| 16 | Audit report | assembles **only the sections that fired**, plus a never-omitted "Undecided / needs investigation" roll-up |
 
 **Two-layer UI** (`components/audit/workspace.tsx`):
 - **Standard view** (`/audit/[id]`): Overview · Claims · Evidence · Review · Simulation · Audit · History.
-- **Advanced Audit View** (`/audit/[id]/advanced`): Category Ignition · Boundary Audit / Scale Audit · Transition Audit · History Reinjection · Address / Domain Analysis · Counterfactual Audit · Theory Mine Audit · Regression Audit. Panels for stages that did not fire say so and why.
+- **Advanced Audit View** (`/audit/[id]/advanced`): Category Ignition · Boundary Audit / Scale Audit · Transition Audit · History Reinjection · Address / Domain Analysis · Counterfactual Audit · Theory Mine Audit · Regression Audit · Straw-Man Risk Audit. Panels for stages that did not fire say so and why.
 - The document body renders with the recorded ground spans highlighted; every finding has a **[jump to text]** control.
 
 **Evaluation axes** fire per document (evidence fidelity, reproducibility,
@@ -168,13 +169,21 @@ Migration `20260910013559_research_audit_layer` — **additive**: 20 new
 `audit_sessions` to `users` / `records` that do not alter those tables). No
 `DROP` / `ALTER COLUMN` anywhere.
 
+Migration `20260910020734_straw_man_risk_audit` — **additive**: adds the enum
+value `AuditStage.STRAW_MAN_RISK` and one table `audit_straw_man_risk_audits`
+(one row per criticised target; six dimension columns default `"UNDETERMINED"`,
+`riskTypes String[]`, text output columns, `fiveStage Json`,
+`understandingInsufficientConcern Boolean`, FK to `audit_sessions` only). No
+`DROP` / `ALTER COLUMN`.
+
 Tables: `audit_sessions`, `audit_source_documents`, `audit_document_segments`,
 `audit_ziran_runs`, `audit_ziran_stage_activations`, `audit_categories`,
 `audit_category_ignition_records`, `audit_findings`, `audit_transition_claims`,
 `audit_dependency_edges`, `audit_history_reinjections`, `audit_address_nodes`,
 `audit_claim_evidence_links`, `audit_simulation_candidates`,
 `audit_theory_mine_findings`, `audit_regression_findings`, `audit_theory_feedback`,
-`audit_evaluation_axis_readings`, `audit_ai_operations`, `audit_reports`.
+`audit_evaluation_axis_readings`, `audit_ai_operations`, `audit_reports`, and
+(second migration) `audit_straw_man_risk_audits`.
 
 Deliberate shape choices: `kind` / `changeForm` / `axis` are `String` (the named
 values in `lib/` are a revisable vocabulary); `EvaluationAxisReading` has a
@@ -243,8 +252,10 @@ proxies. No change to the DOI adapter or the review pages.
 ## 11. Migration policy
 
 - Local: `npm run prisma:migrate`.
-- Production: `npx prisma migrate deploy` (never `db push`). This migration is
-  additive; take the normal pre-migration backup.
+- Production: `npx prisma migrate deploy` (never `db push`). Both audit-layer
+  migrations (`20260910013559_research_audit_layer`,
+  `20260910020734_straw_man_risk_audit`) are additive; take the normal
+  pre-migration backup.
 - `AUDIT_ENABLED` stays `false` in production until the layer is reviewed —
   routes 404, no nav link, no API.
 
@@ -270,6 +281,66 @@ Env added: `AUDIT_ENABLED` (default `false`), `AUDIT_MAX_DOC_BYTES` (default
   provenance management / PDF chat / paper scoring?** No AI runs; there is no
   citation/knowledge graph; history-reinjection is explicitly *not* a provenance
   log; there is no score of any kind; there is no chat surface.
+
+## 14a. Straw-Man Risk / Target-Understanding audit (stage 15)
+
+**When it fires.** Only when `detectCriticismTargets` (`lib/research-audit/straw-man.ts`)
+finds both (a) criticism / rebuttal / negative-evaluation / limitation-pointing /
+comparative-superiority language (`CRITICISM_MARKERS`, `COMPARATIVE_SUPERIORITY_MARKERS`)
+and (b) at least one *specific* target — a person ("X argues / X's account"), a named
+system ("the X theory / model / programme / school"), an `-ism`, or an "X's theory of Y".
+No criticism, or no identifiable target → the stage does **not** fire (recorded
+`NOT_APPLICABLE` with the reason). Bare person names are folded into the more
+specific "X's theory of Y" row when both are present.
+
+**What it audits.** Not whether the criticism is correct — whether the target was
+sufficiently understood and reconstructed *before* being criticised (straw-man
+detection: the target simplified, fixated at an old version, weakened, or stripped
+of its own limiting conditions before rebuttal).
+
+**Ten audit items** drive six **independently-displayed** dimensions — never summed:
+
+| dimension (stored slug) | 低リスク / 要確認 / 高リスク / 判定不能 |
+|---|---|
+| 一次文献理解 `primaryLiterature` | primary works cited, or only secondary literature / intros / summaries? |
+| 最新立場整合性 `latestPositionAlignment` | latest/mature position, or an early formulation the target later revised (`旧版固定型`)? |
+| 既処理論点見落とし `alreadyProcessedPoints` | has the target already limited / processed / self-corrected the point? ("does not consider X" language → 高リスク) |
+| 強い版への応答 `strongVersionResponse` | critique against the strongest reconstructible version, not the weakest reading (`過度単純化型`)? |
+| 中心命題代表性 `centralPropositionRepr` | a central proposition, or a peripheral interview / lecture / footnote remark (`周辺命題代表化型`)? |
+| 概念位置の正確性 `conceptLevelAccuracy` | concept level (ontological / methodological / normative / functional / metaphorical / historical / analytical) not conflated; critic's own categories not projected onto the target (`批判者側カテゴリー投射型`) |
+
+**Risk types** (`riskTypes`, 0+): 対象理解不足型 / 一次文献不足型 / 旧版固定型 /
+既処理論点見落とし型 / 過度単純化型 / 周辺命題代表化型 / 文脈切断型 / 概念水準混同型 /
+翻訳変形型 / 批判者側カテゴリー投射型 / 帰属不能命題型.
+
+**Outputs per target**: 主要な藁人形化リスク · 根拠 · 対象側のより強い再構成 ·
+批判を維持したまま修正する方法 · a 5-stage scaffold (Claim / Target Position /
+Primary Evidence / Strongest Reconstruction / Critique) · `recursiveSelfApplicationNote`
+(for self-revising thinkers, the limits of re-applying the target's own method to
+the target's own central vocabulary).
+
+**Revision principle (encoded in the copy, not a gate).** Detecting straw-man risk
+does **not** auto-reject the criticism: reconstruct the target stronger and more
+accurate first, then re-evaluate whether the criticism still holds. When target
+understanding is insufficient the stage must **not** assert "the target does not
+consider this problem" — the finding text is limited to
+「一次文献上の確認が不足している」/「現在確認できる範囲では十分に処理されていない」/
+「対象の最新立場の確認が必要」, and `understandingInsufficientConcern = true` sets the
+finding kind to `STRAW_MAN_RISK_UNDERSTANDING_INSUFFICIENT` with the banner
+「対象理解不足による藁人形化懸念」— the criticism is **not** approved as complete.
+
+**Model**: `audit_straw_man_risk_audits` (one row per target). `EvaluationAxisReading`
+axis `TARGET_UNDERSTANDING` is text only. UI: Advanced view → "Straw-Man Risk Audit"
+panel (per-target cards with the six dimension badges) + Standard "Audit" tab.
+
+**Phase 1 is heuristic.** It matches marker lexicons and citation shapes; it cannot
+read the primary literature. Every dimension defaults toward 要確認 / 判定不能, and
+the stage's own copy says reconstruction against primary sources is still required
+before any criticism is treated as settled. A future LLM analyzer would fill the
+5-stage reconstruction with actual primary-source content (source `AI_INFERENCE`,
+grounded).
+
+---
 
 ## 13. Counterexamples / modifications owed to the current ("latest") ZS theory
 

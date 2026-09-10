@@ -5,11 +5,14 @@ import {
   ADDRESS_MARKERS,
   BOUNDARY_MARKERS,
   CANDIDATE_CATEGORIES,
+  COMPARATIVE_SUPERIORITY_MARKERS,
+  CRITICISM_MARKERS,
   HISTORY_MARKERS,
   SCALE_MARKERS,
   SIMULATION_MARKERS,
   TRANSITION_MARKERS,
 } from "@/lib/research-audit/lexicon";
+import { detectCriticismTargets } from "@/lib/research-audit/straw-man";
 import { AUDIT_STAGES, type PlannedStage, type ZiranPlan } from "./types";
 
 const METHODOLOGY_VERSION = "ziran-orchestration-2026-09-phase1";
@@ -119,7 +122,35 @@ export function planAudit(doc: ParsedDocument, opts: { hasDoiOrRecordLink: boole
   if (doc.meta.wordCount >= 80) fire("REGRESSION", "Checks for regression to a weaker earlier stage, and records any way the document itself would require modifying / suspending / reclassifying the current methodological layer.");
   else skip("REGRESSION", "Not enough content.");
 
-  // 15. REPORT — always fires; assembles only the sections that fired.
+  // 15. STRAW_MAN_RISK — conditional. Fires ONLY when the document criticises,
+  //     rebuts, negatively evaluates, points out limitations of, or claims
+  //     comparative superiority over a *specific* person / theory / school /
+  //     thought-system / scientific model / research programme. If there is no
+  //     such criticism it does not fire.
+  const critN = anyMarker(text, CRITICISM_MARKERS);
+  const compN = anyMarker(text, COMPARATIVE_SUPERIORITY_MARKERS);
+  const smTargets = detectCriticismTargets(doc);
+  if ((critN >= 1 || compN >= 1) && smTargets.length > 0) {
+    fire(
+      "STRAW_MAN_RISK",
+      `${critN} criticism marker(s) and ${compN} comparative-superiority marker(s); ${smTargets.length} candidate target(s) of criticism identified (${smTargets
+        .slice(0, 4)
+        .map((t) => t.label)
+        .join(", ")}${smTargets.length > 4 ? ", …" : ""}). Audits whether each target was reconstructed at its strongest before being criticised.`,
+    );
+  } else if (critN >= 1 || compN >= 1) {
+    skip(
+      "STRAW_MAN_RISK",
+      "Criticism / comparative-superiority language is present, but no specific person, theory, school, thought-system, scientific model, or research programme could be identified as its target.",
+    );
+  } else {
+    skip(
+      "STRAW_MAN_RISK",
+      "The document contains no criticism, rebuttal, negative evaluation, limitation-pointing, or comparative-superiority claim against a specific target — nothing for this audit to work on.",
+    );
+  }
+
+  // 16. REPORT — always fires; assembles only the sections that fired.
   fire("REPORT", "Assembles the applicable sections only.");
 
   return {

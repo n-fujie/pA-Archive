@@ -273,6 +273,7 @@ async function persistStageOutput(sessionId: string, stage: AuditStage, out: Sta
     ["simulationCandidates", (rows) => prisma.simulationCandidate.createMany({ data: rows.map((r) => ({ sessionId, description: String(r.description).slice(0, 4000), detected: j(r.detected), providerHandoff: j(r.providerHandoff), varyableInputs: j(r.varyableInputs), groundRefs: j(r.groundRefs), source: (r.source as "HEURISTIC") ?? "HEURISTIC" })) })],
     ["theoryMines", (rows) => prisma.theoryMineFinding.createMany({ data: rows.map((r) => ({ sessionId, claimText: String(r.claimText).slice(0, 4000), claimSegmentId: (r.claimSegmentId as string) ?? null, mineKind: String(r.mineKind), reason: String(r.reason).slice(0, 2000), severity: String(r.severity ?? "LOW"), groundRefs: j(r.groundRefs), source: (r.source as "HEURISTIC") ?? "HEURISTIC" })) })],
     ["regressions", (rows) => prisma.regressionFinding.createMany({ data: rows.map((r) => ({ sessionId, description: String(r.description).slice(0, 4000), regressedToWhat: String(r.regressedToWhat ?? ""), withinDocument: (r.withinDocument as boolean) ?? true, groundRefs: j(r.groundRefs), source: (r.source as "HEURISTIC") ?? "HEURISTIC" })) })],
+    ["strawManRiskAudits", (rows) => prisma.strawManRiskAudit.createMany({ data: rows.map((r) => ({ sessionId, targetKind: String(r.targetKind ?? "OTHER"), targetLabel: String(r.targetLabel ?? "").slice(0, 200), criticismSummary: String(r.criticismSummary ?? "").slice(0, 6000), primaryLiterature: String(r.primaryLiterature ?? "UNDETERMINED"), latestPositionAlignment: String(r.latestPositionAlignment ?? "UNDETERMINED"), alreadyProcessedPoints: String(r.alreadyProcessedPoints ?? "UNDETERMINED"), strongVersionResponse: String(r.strongVersionResponse ?? "UNDETERMINED"), centralPropositionRepr: String(r.centralPropositionRepr ?? "UNDETERMINED"), conceptLevelAccuracy: String(r.conceptLevelAccuracy ?? "UNDETERMINED"), riskTypes: (r.riskTypes as string[]) ?? [], mainStrawManRisk: String(r.mainStrawManRisk ?? "").slice(0, 6000), grounds: String(r.grounds ?? "").slice(0, 6000), strongerReconstruction: String(r.strongerReconstruction ?? "").slice(0, 6000), reviseWhileKeepingCritique: String(r.reviseWhileKeepingCritique ?? "").slice(0, 6000), fiveStage: j(r.fiveStage), understandingInsufficientConcern: (r.understandingInsufficientConcern as boolean) ?? false, recursiveSelfApplicationNote: String(r.recursiveSelfApplicationNote ?? "").slice(0, 6000), groundRefs: j(r.groundRefs), source: (r.source as "HEURISTIC") ?? "HEURISTIC" })) })],
     ["theoryFeedback", (rows) => prisma.theoryFeedback.createMany({ data: rows.map((r) => ({ sessionId, targetLayer: String(r.targetLayer), proposedChange: String(r.proposedChange), rationale: String(r.rationale).slice(0, 6000), groundRefs: j(r.groundRefs), source: (r.source as "HEURISTIC") ?? "HEURISTIC", status: String(r.status ?? "OPEN") })) })],
   ];
   for (const [key, fn] of simple) {
@@ -311,7 +312,8 @@ async function persistReport(
         (out?.claimEvidence?.length ?? 0) +
         (out?.simulationCandidates?.length ?? 0) +
         (out?.theoryMines?.length ?? 0) +
-        (out?.regressions?.length ?? 0);
+        (out?.regressions?.length ?? 0) +
+        (out?.strawManRiskAudits?.length ?? 0);
       return {
         key: meta.id,
         n: meta.n,

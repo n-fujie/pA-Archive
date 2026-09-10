@@ -616,7 +616,8 @@ enum AuditStage {
   COUNTERFACTUAL       // 12 counterexample / counterfactual audit
   THEORY_MINE          // 13 theory-mine audit
   REGRESSION           // 14 regression audit (bidirectional)
-  REPORT               // 15 auto-audit report generation
+  STRAW_MAN_RISK       // 15 straw-man risk / target-understanding audit (conditional)
+  REPORT               // 16 auto-audit report generation
 }
 
 enum StageActivationState {
@@ -655,6 +656,7 @@ model AuditSession {
   simulationCandidates SimulationCandidate[]
   theoryMines        TheoryMineFinding[]
   regressions        RegressionFinding[]
+  strawManRiskAudits StrawManRiskAudit[]
   theoryFeedback     TheoryFeedback[]
   evaluationAxes     EvaluationAxisReading[]
   aiOperations       AiOperation[]
@@ -968,6 +970,65 @@ model RegressionFinding {
 
   @@index([sessionId])
   @@map("audit_regression_findings")
+}
+
+// Stage 15 — Straw-Man Risk / Target Understanding Audit.
+//
+// Fires ONLY when the document criticises a specific person / theory / school /
+// thought system / scientific model / research programme (rebuttal, negative
+// evaluation, limitation-pointing, comparative-superiority claim). Does NOT
+// judge whether the criticism is right — it audits whether the target was
+// sufficiently understood and reconstructed BEFORE being criticised.
+//
+// No aggregate score: the six named dimensions are stored and shown
+// independently, each as LOW_RISK / NEEDS_CHECK / HIGH_RISK / UNDETERMINED.
+// Detecting a straw-man risk NEVER auto-rejects the criticism (see the model
+// fields for the reconstruct-then-re-evaluate outputs).
+model StrawManRiskAudit {
+  id                 String   @id @default(cuid())
+  sessionId          String
+  targetKind         String   // PERSON | THEORY | SCHOOL | THOUGHT_SYSTEM | SCIENTIFIC_MODEL | RESEARCH_PROGRAMME | OTHER
+  targetLabel        String
+  criticismSummary   String   @db.Text
+
+  // Six independently-displayed dimensions. Value: LOW_RISK | NEEDS_CHECK | HIGH_RISK | UNDETERMINED
+  primaryLiterature       String @default("UNDETERMINED") // 一次文献理解
+  latestPositionAlignment String @default("UNDETERMINED") // 最新立場整合性
+  alreadyProcessedPoints  String @default("UNDETERMINED") // 既処理論点見落とし
+  strongVersionResponse   String @default("UNDETERMINED") // 強い版への応答
+  centralPropositionRepr   String @default("UNDETERMINED") // 中心命題代表性
+  conceptLevelAccuracy    String @default("UNDETERMINED") // 概念位置の正確性
+
+  // Risk types (0+): 対象理解不足型 / 一次文献不足型 / 旧版固定型 / 既処理論点見落とし型 /
+  // 過度単純化型 / 周辺命題代表化型 / 文脈切断型 / 概念水準混同型 / 翻訳変形型 /
+  // 批判者側カテゴリー投射型 / 帰属不能命題型 — as stable slugs.
+  riskTypes          String[] @default([])
+
+  mainStrawManRisk           String @db.Text @default("")
+  grounds                    String @db.Text @default("")
+  strongerReconstruction     String @db.Text @default("")
+  reviseWhileKeepingCritique String @db.Text @default("")
+
+  // Optional Claim / Target Position / Primary Evidence / Strongest Reconstruction / Critique.
+  fiveStage          Json     @default("{}")
+
+  // True when target understanding is likely insufficient — the criticism must
+  // NOT be approved as complete; label "対象理解不足による藁人形化懸念".
+  understandingInsufficientConcern Boolean @default(false)
+
+  // When the target is a thinker who emphasises self-revision / recursive
+  // critique / concept revision: the limits of re-applying their own method to
+  // their own central vocabulary.
+  recursiveSelfApplicationNote String @db.Text @default("")
+
+  groundRefs         Json     @default("[]")
+  source             AuditFindingSource @default(HEURISTIC)
+  createdAt          DateTime @default(now())
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("audit_straw_man_risk_audits")
 }
 
 // Stage 14 in reverse: the uploaded document / this implementation may require

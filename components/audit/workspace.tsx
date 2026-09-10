@@ -26,7 +26,24 @@ const ADVANCED_PANELS = [
   { key: "COUNTERFACTUAL", label: "Counterfactual Audit" },
   { key: "THEORY_MINE", label: "Theory Mine Audit" },
   { key: "REGRESSION", label: "Regression Audit" },
+  { key: "STRAW_MAN_RISK", label: "Straw-Man Risk Audit" },
 ] as const;
+
+const RISK_VERDICT: Record<string, { label: string; cls: string }> = {
+  LOW_RISK: { label: "低リスク", cls: "badge-review" },
+  NEEDS_CHECK: { label: "要確認", cls: "badge-warn" },
+  HIGH_RISK: { label: "高リスク", cls: "badge-danger" },
+  UNDETERMINED: { label: "判定不能", cls: "badge-doi" },
+};
+
+const STRAW_MAN_DIMENSIONS: { key: string; label: string }[] = [
+  { key: "primaryLiterature", label: "一次文献理解" },
+  { key: "latestPositionAlignment", label: "最新立場整合性" },
+  { key: "alreadyProcessedPoints", label: "既処理論点見落とし" },
+  { key: "strongVersionResponse", label: "強い版への応答" },
+  { key: "centralPropositionRepr", label: "中心命題代表性" },
+  { key: "conceptLevelAccuracy", label: "概念位置の正確性" },
+];
 
 export function AuditWorkspace({ view, mode }: { view: AuditSessionView; mode: Mode }) {
   const text = view.document?.text ?? "";
@@ -225,7 +242,7 @@ function StandardPanel({
     );
   }
   if (tab === "audit") {
-    return <FindingList findings={findingsFor(["CATEGORIES", "CATEGORY_IGNITION", "WEAK_OPERATIONAL", "THEORY_MINE", "COUNTERFACTUAL", "REGRESSION"])} jump={jump} empty="No audit-stage findings." />;
+    return <FindingList findings={findingsFor(["CATEGORIES", "CATEGORY_IGNITION", "WEAK_OPERATIONAL", "THEORY_MINE", "COUNTERFACTUAL", "REGRESSION", "STRAW_MAN_RISK"])} jump={jump} empty="No audit-stage findings." />;
   }
   if (tab === "history") {
     return (
@@ -333,6 +350,92 @@ function AdvancedPanel({
       </div>
     );
   }
+  if (tab === "STRAW_MAN_RISK") {
+    const audits = view.strawManRiskAudits;
+    const activation = view.ziran?.activations.find((a) => a.stage === "STRAW_MAN_RISK");
+    return (
+      <div className="space-y-3">
+        <div className="card p-3 text-xs text-ink-muted">
+          <p>
+            Conditional stage. Fires only when the document criticises / rebuts / negatively evaluates / points out
+            limitations of / claims comparative superiority over a specific person, theory, school, thought-system,
+            scientific model, or research programme.
+          </p>
+          {activation && (
+            <p className="mt-1">
+              <span className={`badge ${activation.state === "FIRED" ? "badge-review" : "badge-doi"}`}>
+                {activation.state.toLowerCase()}
+              </span>{" "}
+              {activation.reason}
+            </p>
+          )}
+          <p className="mt-1 text-[11px] text-ink-faint">
+            This audit does not judge whether the criticism is right. It checks whether the target was reconstructed at
+            its strongest before being criticised. The six dimensions are shown independently and are never summed into a
+            score.
+          </p>
+        </div>
+        {audits.length === 0 && <Empty>Straw-man risk audit did not fire, or isolated no specific criticised target.</Empty>}
+        {audits.map((a) => (
+          <article key={a.id} className="card space-y-2 p-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="badge badge-doi">{a.targetKind.replace(/_/g, " ").toLowerCase()}</span>
+              <p className="font-medium">{a.targetLabel}</p>
+            </div>
+            <p className="text-xs text-ink-soft">{a.criticismSummary}</p>
+
+            {a.understandingInsufficientConcern && (
+              <p className="rounded-sm border border-danger/40 bg-danger/5 p-2 text-xs font-semibold text-danger">
+                対象理解不足による藁人形化懸念 — この批判は「完結した批判」として承認しない。まず一次文献から対象を再構成すること。
+              </p>
+            )}
+
+            <div className="grid grid-cols-2 gap-1.5">
+              {STRAW_MAN_DIMENSIONS.map((d) => {
+                const v = (a.dimensions as Record<string, string>)[d.key] ?? "UNDETERMINED";
+                const verdict = RISK_VERDICT[v] ?? RISK_VERDICT.UNDETERMINED;
+                return (
+                  <div key={d.key} className="flex items-center justify-between gap-1 rounded-sm border border-rule px-2 py-1 text-[11px]">
+                    <span className="text-ink-muted">{d.label}</span>
+                    <span className={`badge ${verdict.cls}`}>{verdict.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {a.riskTypes.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {a.riskTypes.map((rt) => (
+                  <span key={rt} className="badge badge-warn text-[11px]">{rt}</span>
+                ))}
+              </div>
+            )}
+
+            <Field label="主要な藁人形化リスク" value={a.mainStrawManRisk} />
+            <Field label="根拠" value={a.grounds} />
+            <Field label="対象側のより強い再構成" value={a.strongerReconstruction} />
+            <Field label="批判を維持したまま修正する方法" value={a.reviseWhileKeepingCritique} />
+
+            {a.recursiveSelfApplicationNote && (
+              <Field label="自己適用の限界（自己修正を掲げる思想家の場合）" value={a.recursiveSelfApplicationNote} />
+            )}
+
+            <details className="text-xs">
+              <summary className="cursor-pointer text-ink-muted">5段階再構成 (Claim / Target Position / Primary Evidence / Strongest Reconstruction / Critique)</summary>
+              <ul className="mt-1 space-y-1 text-ink-soft">
+                {["claim", "targetPosition", "primaryEvidence", "strongestReconstruction", "critique"].map((k) => (
+                  <li key={k}>
+                    <strong>{k}:</strong> {String((a.fiveStage as Record<string, unknown>)[k] ?? "—")}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </article>
+        ))}
+        <FindingList findings={findingsFor(["STRAW_MAN_RISK"])} jump={jump} empty="" />
+      </div>
+    );
+  }
   if (tab === "REGRESSION") {
     return (
       <div className="space-y-3">
@@ -390,6 +493,16 @@ function EvalAxes({ view }: { view: AuditSessionView }) {
       <p className="mt-2 text-[11px] text-ink-faint">
         Axes are qualitative and independent. They are never summed into a single &quot;quality&quot;, &quot;scientificness&quot;, &quot;reliability&quot; or &quot;truth&quot; score.
       </p>
+    </div>
+  );
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  if (!value) return null;
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">{label}</p>
+      <p className="mt-0.5 whitespace-pre-wrap text-xs text-ink-soft">{value}</p>
     </div>
   );
 }

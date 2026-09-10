@@ -19,7 +19,8 @@ export const AUDIT_STAGES: { id: AuditStage; n: number; label: string; blurb: st
   { id: "COUNTERFACTUAL", n: 12, label: "Counterexample / counterfactual", blurb: "What observation would weaken the claim; what condition change alters the conclusion; alternative models; whether changing the adopted category dissolves the problem; falsifiable vs definitional range." },
   { id: "THEORY_MINE", n: 13, label: "Theory-mine audit", blurb: "Over-generalisation, unverified ontological reification, physical realisation of metaphor, assertion of unobservable mechanism, category over-fixation, future over-specification, local→universal leap, institutional-evaluation→truth conversion." },
   { id: "REGRESSION", n: 14, label: "Regression audit (bidirectional)", blurb: "Has the document (or this implementation) regressed to a weaker earlier stage? And: does the new object require modifying / suspending / reclassifying the current theory itself?" },
-  { id: "REPORT", n: 15, label: "Audit report", blurb: "Assemble only the sections that actually apply — non-applicable stages are not shown." },
+  { id: "STRAW_MAN_RISK", n: 15, label: "Straw-man risk / target-understanding audit", blurb: "Fires only when the document criticises a specific person / theory / school / thought-system / scientific model / research programme. Audits whether the target was sufficiently understood and reconstructed before being criticised — not whether the criticism is right. No aggregate score; six dimensions shown independently as 低リスク / 要確認 / 高リスク / 判定不能. Reconstruct the target's strongest version first, then re-evaluate whether the criticism still holds." },
+  { id: "REPORT", n: 16, label: "Audit report", blurb: "Assemble only the sections that actually apply — non-applicable stages are not shown." },
 ];
 
 export const STAGE_BY_ID = Object.fromEntries(AUDIT_STAGES.map((s) => [s.id, s])) as Record<
@@ -84,6 +85,8 @@ export interface StageOutput {
   simulationCandidates?: unknown[];
   theoryMines?: unknown[];
   regressions?: unknown[];
+  /** Straw-man risk / target-understanding audit rows (one per criticised target). */
+  strawManRiskAudits?: unknown[];
   theoryFeedback?: unknown[];
   evaluationAxes?: { axis: string; fired: boolean; reading: string }[];
   /** If this stage decided it does not apply after inspecting content. */

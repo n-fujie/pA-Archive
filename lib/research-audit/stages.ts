@@ -6,14 +6,26 @@ import {
   ADDRESS_MARKERS,
   BOUNDARY_MARKERS,
   CANDIDATE_CATEGORIES,
+  CHARITABLE_READING_MARKERS,
   CLAIM_MARKERS,
+  CONTEXT_CUT_MARKERS,
+  CRITIC_CATEGORY_PROJECTION_MARKERS,
+  CRITICISM_MARKERS,
   FALSIFIABILITY_MARKERS,
   HISTORY_MARKERS,
+  OUTDATED_VERSION_MARKERS,
+  PERIPHERAL_STATEMENT_MARKERS,
   SCALE_MARKERS,
+  SECONDARY_SOURCE_MARKERS,
+  SELF_REVISION_METHODOLOGY_MARKERS,
   SIMULATION_MARKERS,
+  TARGET_DOES_NOT_CONSIDER_PATTERNS,
+  TARGET_REVISION_MARKERS,
   THEORY_MINE_PATTERNS,
   TRANSITION_MARKERS,
+  TRANSLATION_MARKERS,
 } from "./lexicon";
+import { detectCriticismTargets } from "./straw-man";
 import { configurationCsb } from "@/lib/ziran/vocabulary";
 
 const DEFINITION_MARKERS = [
@@ -53,6 +65,7 @@ export class HeuristicAnalyzer implements AuditAnalyzer {
       case "COUNTERFACTUAL": return this.counterfactual(ctx);
       case "THEORY_MINE": return this.theoryMine(ctx);
       case "REGRESSION": return this.regression(ctx);
+      case "STRAW_MAN_RISK": return this.strawManRisk(ctx);
       case "REPORT": return { }; // assembled by the pipeline
       default: return {};
     }
@@ -565,6 +578,276 @@ export class HeuristicAnalyzer implements AuditAnalyzer {
       })),
       theoryFeedback,
       evaluationAxes: [{ axis: "REVISABILITY", fired: true, reading: "Bidirectional theory check is recorded as OPEN — it requires the current ZS manuscript, which this layer does not hold." }],
+    };
+  }
+
+  // 15 ----------------------------------------------------------------------
+  // Straw-Man Risk / Target-Understanding audit. Conditional stage: only runs
+  // when the orchestrator found criticism of a specific target. Its job is NOT
+  // to say whether the criticism is right — it audits whether the target was
+  // reconstructed at its strongest before being criticised. No aggregate score:
+  // six dimensions are reported independently.
+  private strawManRisk(ctx: AnalyzerContext): StageOutput {
+    const text = ctx.doc.text;
+    const lower = text.toLowerCase();
+    const sentences = splitSentences(text);
+    const targets = detectCriticismTargets(ctx.doc);
+
+    if (targets.length === 0) {
+      return {
+        notApplicable: {
+          reason:
+            "After inspection, no specific person / theory / school / thought-system / scientific model / research programme could be isolated as the target of the criticism.",
+        },
+      };
+    }
+
+    const has = (markers: string[]) => markers.some((m) => lower.includes(m.toLowerCase().trim()));
+    const anyRe = (res: RegExp[]) => res.some((re) => re.test(text));
+
+    // Document-wide signals (cheaper to compute once).
+    // A parenthetical / bracketed citation: [12], (Author, 1984), (Author 1984; Other 2004), (Author 2004a) …
+    const CITATION_RE = /\[\d+\]|\([^()]*\b\d{4}[a-z]?\b[^()]*\)|\b[A-Z][A-Za-z-]+\s+\(\d{4}[a-z]?\)/;
+    const docHasCitation = CITATION_RE.test(text);
+    const docSecondaryOnly = has(SECONDARY_SOURCE_MARKERS);
+    const docOutdated = has(OUTDATED_VERSION_MARKERS);
+    const docRevisionAck = has(TARGET_REVISION_MARKERS);
+    const docDoesNotConsider = anyRe(TARGET_DOES_NOT_CONSIDER_PATTERNS);
+    const docCharitable = has(CHARITABLE_READING_MARKERS);
+    const docPeripheral = has(PERIPHERAL_STATEMENT_MARKERS);
+    const docProjection = has(CRITIC_CATEGORY_PROJECTION_MARKERS);
+    const docContextCut = has(CONTEXT_CUT_MARKERS);
+    const docTranslation = has(TRANSLATION_MARKERS);
+    const docSelfRevisionThinker = has(SELF_REVISION_METHODOLOGY_MARKERS);
+
+    const rows: unknown[] = [];
+    const findings: NonNullable<StageOutput["findings"]> = [];
+
+    for (const t of targets.slice(0, 6)) {
+      const near = lower.slice(
+        Math.max(0, t.charStart - 700),
+        Math.min(lower.length, t.charEnd + 700),
+      );
+      const nearHas = (markers: string[]) => markers.some((m) => near.includes(m.toLowerCase().trim()));
+      const nearCitation = CITATION_RE.test(
+        text.slice(Math.max(0, t.charStart - 700), Math.min(text.length, t.charEnd + 700)),
+      );
+
+      const risk: string[] = [];
+
+      // --- dimension 1: 一次文献理解 (primary-literature understanding) ------
+      let primaryLiterature = "UNDETERMINED";
+      if (docSecondaryOnly && !nearCitation) {
+        primaryLiterature = "HIGH_RISK";
+        risk.push("一次文献不足型");
+      } else if (!docHasCitation && !nearCitation) {
+        primaryLiterature = "NEEDS_CHECK";
+      } else if (nearCitation) {
+        primaryLiterature = "NEEDS_CHECK"; // a citation exists, but "is it a *central primary* work" cannot be decided heuristically
+      }
+
+      // --- dimension 2: 最新立場整合性 (latest-position alignment) ----------
+      let latestPositionAlignment = "UNDETERMINED";
+      if ((docOutdated || nearHas(OUTDATED_VERSION_MARKERS)) && !docRevisionAck) {
+        latestPositionAlignment = "HIGH_RISK";
+        risk.push("旧版固定型");
+      } else if (docRevisionAck) {
+        latestPositionAlignment = "NEEDS_CHECK";
+      }
+
+      // --- dimension 3: 既処理論点見落とし (already-processed-points oversight) -
+      let alreadyProcessedPoints = "UNDETERMINED";
+      if (docDoesNotConsider) {
+        alreadyProcessedPoints = "HIGH_RISK";
+        risk.push("既処理論点見落とし型");
+        risk.push("対象理解不足型");
+      } else {
+        alreadyProcessedPoints = "NEEDS_CHECK";
+      }
+
+      // --- dimension 4: 強い版への応答 (response to the strong version) ------
+      let strongVersionResponse = "UNDETERMINED";
+      const weakReadingCues = /\bcrude|simplistic|naive|obviously\s+(?:wrong|false)|absurd|silly|the\s+weak(?:est)?\s+(?:form|version|reading)/i.test(near);
+      if (docCharitable) {
+        strongVersionResponse = "NEEDS_CHECK"; // charitable-reading language present; still verify it was applied to THIS target
+      } else if (weakReadingCues || docDoesNotConsider) {
+        strongVersionResponse = "HIGH_RISK";
+        risk.push("過度単純化型");
+      } else {
+        strongVersionResponse = "NEEDS_CHECK";
+      }
+
+      // --- dimension 5: 中心命題代表性 (central-proposition representativeness) -
+      let centralPropositionRepr = "UNDETERMINED";
+      if (docPeripheral || nearHas(PERIPHERAL_STATEMENT_MARKERS)) {
+        centralPropositionRepr = "HIGH_RISK";
+        risk.push("周辺命題代表化型");
+      } else {
+        centralPropositionRepr = "NEEDS_CHECK";
+      }
+
+      // --- dimension 6: 概念位置の正確性 (concept-position accuracy) ---------
+      let conceptLevelAccuracy = "UNDETERMINED";
+      if (docProjection || nearHas(CRITIC_CATEGORY_PROJECTION_MARKERS)) {
+        conceptLevelAccuracy = "HIGH_RISK";
+        risk.push("批判者側カテゴリー投射型");
+        risk.push("概念水準混同型");
+      } else if (docTranslation) {
+        conceptLevelAccuracy = "NEEDS_CHECK";
+      }
+
+      if (docContextCut || nearHas(CONTEXT_CUT_MARKERS)) risk.push("文脈切断型");
+      if (docTranslation) risk.push("翻訳変形型");
+      if (!nearCitation && !docHasCitation) risk.push("帰属不能命題型");
+
+      const understandingInsufficientConcern =
+        docDoesNotConsider ||
+        primaryLiterature === "HIGH_RISK" ||
+        latestPositionAlignment === "HIGH_RISK" ||
+        (primaryLiterature === "NEEDS_CHECK" && !nearCitation && !docHasCitation);
+
+      const riskTypes = [...new Set(risk)];
+
+      // --- narrative outputs ------------------------------------------------
+      const criticismSentence =
+        sentences.find(
+          (s) =>
+            s.text.toLowerCase().includes(t.label.toLowerCase().split(" ")[0]) &&
+            CRITICISM_MARKERS.some((m) => s.text.toLowerCase().includes(m)),
+        ) ?? sentences.find((s) => CRITICISM_MARKERS.some((m) => s.text.toLowerCase().includes(m)));
+      const criticismSummary = criticismSentence
+        ? criticismSentence.text.slice(0, 600)
+        : `The document criticises "${t.label}" but the specific critical proposition was not isolated by the heuristic pass.`;
+
+      const grounds = [
+        docDoesNotConsider
+          ? "The text contains a \"the target does not consider / fails to address X\" construction. Where target understanding is not established from primary literature, this framing cannot be sustained — it must be limited to \"現在確認できる範囲では十分に処理されていない\" / \"一次文献上の確認が不足している\"."
+          : null,
+        docSecondaryOnly
+          ? "Secondary-source language (\"as summarised by\", \"the standard interpretation\", …) is present near the target and no primary citation was found in the surrounding window."
+          : null,
+        docOutdated && !docRevisionAck
+          ? "Only an early / original formulation of the target is referenced, with no acknowledgement of later revision or self-limitation."
+          : null,
+        docPeripheral
+          ? "The criticised statement is framed as an interview / lecture / aside / footnote remark rather than a central proposition."
+          : null,
+        docProjection
+          ? "The critique uses \"must accept\" / \"is committed to\" / \"cannot deny\" constructions that project the critic's categories onto the target."
+          : null,
+        docContextCut
+          ? "A quotation appears to be used with its surrounding conditions / caveats elided."
+          : null,
+        docTranslation
+          ? "A translated technical term is in play; concept strength / negation / modality may shift in translation — original-language correspondence should be checked."
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n") || "No specific straw-man construction was detected by the heuristic pass; the dimensions are reported as 要確認 / 判定不能 pending a reading against primary sources.";
+
+      const strongerReconstruction = [
+        `Before re-evaluating the criticism of "${t.label}", reconstruct the target at its strongest:`,
+        "· cite the central primary work(s), not summaries or introductions;",
+        "· use the latest / mature formulation, not an early version the target later revised or limited;",
+        "· restore the target's own limiting conditions, exceptions, and self-corrections;",
+        "· identify at which level (ontological / methodological / normative / functional / metaphorical / historical / analytical) the target actually uses the disputed concept;",
+        "· confirm the attacked proposition is directly attributable to the target's texts.",
+        docSelfRevisionThinker
+          ? "· because the target emphasises self-revision / recursive critique / concept revision, prioritise examining the limits that arise when the target's own method is re-applied to the target's own central vocabulary — rather than treating the target as fixed."
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const reviseWhileKeepingCritique =
+        "Detecting straw-man risk does not reject the criticism. After reconstructing the target's strongest version, re-state the criticism as: the remaining differences, the limits, the stopping conditions, and the problems the target has genuinely not processed. If, once the target is reconstructed, a residual disagreement can still be shown, the criticism stands in a stronger form. If it cannot, the criticism was resting on the weaker reconstruction.";
+
+      const fiveStage = {
+        claim: criticismSummary,
+        targetPosition: `(reconstruct from ${t.label}'s primary texts — not yet assembled by this layer)`,
+        primaryEvidence: nearCitation
+          ? "(a citation is present near the criticism; verify it is a central primary work and represents the latest position)"
+          : "(no primary citation found near the criticism — 一次文献上の確認が不足している)",
+        strongestReconstruction:
+          "(state the target's strongest version, with its limiting conditions and later revisions, before the critique)",
+        critique: criticismSummary,
+      };
+
+      const recursiveSelfApplicationNote = docSelfRevisionThinker
+        ? `"${t.label}" is treated in the document as emphasising self-revision / recursive critique / concept revision. The most important test of the criticism is therefore not whether a weakly-reconstructed version can be defeated, but whether — after establishing the strongest version — the criticism can still show remaining limits when the target's own methodology is recursively re-applied to the target's own central vocabulary.`
+        : "";
+
+      const mainStrawManRisk =
+        riskTypes.length > 0
+          ? `Primary straw-man risk for "${t.label}": ${riskTypes.join(" / ")}.`
+          : `No specific straw-man construction detected for "${t.label}" by the heuristic pass; target understanding still needs confirmation against primary sources.`;
+
+      rows.push({
+        targetKind: t.kind,
+        targetLabel: t.label,
+        criticismSummary,
+        primaryLiterature,
+        latestPositionAlignment,
+        alreadyProcessedPoints,
+        strongVersionResponse,
+        centralPropositionRepr,
+        conceptLevelAccuracy,
+        riskTypes,
+        mainStrawManRisk,
+        grounds,
+        strongerReconstruction,
+        reviseWhileKeepingCritique,
+        fiveStage,
+        understandingInsufficientConcern,
+        recursiveSelfApplicationNote,
+        groundRefs: [groundAround(text, t.charStart, t.charEnd, 200)],
+        source: "HEURISTIC",
+      });
+
+      findings.push({
+        kind: understandingInsufficientConcern ? "STRAW_MAN_RISK_UNDERSTANDING_INSUFFICIENT" : "STRAW_MAN_RISK",
+        summary: understandingInsufficientConcern
+          ? `対象理解不足による藁人形化懸念 — "${t.label}" の批判は「完結した批判」として承認できない。`
+          : `"${t.label}" への批判: 対象理解の再構成を要確認。`,
+        detail: [
+          mainStrawManRisk,
+          "",
+          "一次文献理解: " + primaryLiterature,
+          "最新立場整合性: " + latestPositionAlignment,
+          "既処理論点見落とし: " + alreadyProcessedPoints,
+          "強い版への応答: " + strongVersionResponse,
+          "中心命題代表性: " + centralPropositionRepr,
+          "概念位置の正確性: " + conceptLevelAccuracy,
+          "",
+          "この監査は批判の賛否を判定しない。対象を最も強い形に再構成してから、批判が維持できるかを再評価すること。",
+          docDoesNotConsider
+            ? "注意: 「対象がこの問題を考えていない」という断定は使用しない。「現在確認できる範囲では十分に処理されていない」「一次文献上の確認が不足している」「対象の最新立場の確認が必要」に限定する。"
+            : "",
+        ]
+          .filter((l) => l !== "" || true)
+          .join("\n"),
+        source: "HEURISTIC",
+        groundRefs: [groundAround(text, t.charStart, t.charEnd, 200)],
+        needsVerification: true,
+        undecidable: understandingInsufficientConcern,
+        severity: understandingInsufficientConcern ? "HIGH" : "MEDIUM",
+      });
+    }
+
+    return {
+      strawManRiskAudits: rows,
+      findings,
+      evaluationAxes: [
+        {
+          axis: "TARGET_UNDERSTANDING",
+          fired: true,
+          reading:
+            `${rows.length} criticised target(s) audited. Dimensions are reported independently and are NOT aggregated into a score. ` +
+            (rows.some((r) => (r as { understandingInsufficientConcern: boolean }).understandingInsufficientConcern)
+              ? "At least one target carries a 対象理解不足による藁人形化懸念 — the corresponding criticism must not be treated as complete until the target is reconstructed from primary literature."
+              : "No target was flagged for insufficient understanding by the heuristic pass; reconstruction against primary sources is still required before the criticism is treated as settled."),
+        },
+      ],
     };
   }
 }

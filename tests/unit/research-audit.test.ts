@@ -124,11 +124,188 @@ describe("every heuristic finding anchors to the document", () => {
   });
 });
 
-describe("the 15 stages are declared in order", () => {
-  it("STRUCTURE is 1 and REPORT is 15", () => {
+describe("the audit stages are declared in order", () => {
+  it("STRUCTURE is 1, STRAW_MAN_RISK is 15, REPORT is last", () => {
     expect(AUDIT_STAGES[0].id).toBe("STRUCTURE");
     expect(AUDIT_STAGES[0].n).toBe(1);
+    expect(AUDIT_STAGES.find((s) => s.id === "STRAW_MAN_RISK")?.n).toBe(15);
     expect(AUDIT_STAGES[AUDIT_STAGES.length - 1].id).toBe("REPORT");
-    expect(AUDIT_STAGES[AUDIT_STAGES.length - 1].n).toBe(15);
+    expect(AUDIT_STAGES[AUDIT_STAGES.length - 1].n).toBe(16);
+    // numbering is contiguous
+    AUDIT_STAGES.forEach((s, i) => expect(s.n).toBe(i + 1));
+  });
+});
+
+describe("Straw-Man Risk / Target-Understanding audit — stage 15", () => {
+  const CRITIQUE_DOC = () =>
+    doc(
+      "In this paper we criticise Dennett's theory of consciousness. Dennett argues that qualia " +
+        "are an illusion, a position we reject. As summarised by introductory accounts, the heterophenomenological " +
+        "method fails to account for the felt character of experience. Dennett does not consider the possibility " +
+        "that first-person reports are themselves data about phenomenal properties. In his early work Dennett " +
+        "originally claimed that intentional systems are merely a stance. Unlike Dennett, our account preserves " +
+        "the reality of phenomenal consciousness. This shows functionalism is untenable. He once remarked in an " +
+        "interview that consciousness is 'fame in the brain', which is obviously wrong.",
+    );
+
+  it("fires only when there is criticism of a specific named target", () => {
+    const neutral = doc(
+      "This study measures reaction times across three conditions. We report means and standard deviations. " +
+        "The apparatus was calibrated before each session. Data were collected over four weeks.",
+    );
+    expect(
+      planAudit(neutral, { hasDoiOrRecordLink: false }).stages.find((s) => s.stage === "STRAW_MAN_RISK")?.state,
+    ).toBe("NOT_APPLICABLE");
+
+    const plan = planAudit(CRITIQUE_DOC(), { hasDoiOrRecordLink: false });
+    expect(plan.stages.find((s) => s.stage === "STRAW_MAN_RISK")?.state).toBe("FIRED");
+  });
+
+  it("does not fire when criticism has no identifiable target", () => {
+    const vague = doc(
+      "The standard approach is mistaken and fails to account for the data. This is a serious limitation. " +
+        "We think the whole framework is flawed and should be rejected in favour of something better.",
+    );
+    const st = planAudit(vague, { hasDoiOrRecordLink: false }).stages.find((s) => s.stage === "STRAW_MAN_RISK")?.state;
+    expect(st).toBe("NOT_APPLICABLE");
+  });
+
+  it("reports six dimensions independently as risk slugs, with no aggregate score", async () => {
+    const a = new HeuristicAnalyzer();
+    const d = CRITIQUE_DOC();
+    const out = await a.analyze("STRAW_MAN_RISK", {
+      sessionId: "t",
+      doc: d,
+      segmentIds: d.segments.map((_, i) => `seg${i}`),
+      planned: { stage: "STRAW_MAN_RISK", state: "FIRED", reason: "", order: 0 },
+      prior: {},
+    });
+    const rows = (out.strawManRiskAudits ?? []) as Record<string, unknown>[];
+    expect(rows.length).toBeGreaterThan(0);
+    const r = rows[0];
+    for (const dim of [
+      "primaryLiterature",
+      "latestPositionAlignment",
+      "alreadyProcessedPoints",
+      "strongVersionResponse",
+      "centralPropositionRepr",
+      "conceptLevelAccuracy",
+    ]) {
+      expect(["LOW_RISK", "NEEDS_CHECK", "HIGH_RISK", "UNDETERMINED"]).toContain(r[dim]);
+    }
+    // no aggregate/score field
+    expect(r.score).toBeUndefined();
+    expect(r.total).toBeUndefined();
+    expect(r.overall).toBeUndefined();
+    // evaluation axis is a string, never summed
+    for (const ax of out.evaluationAxes ?? []) expect(typeof ax.reading).toBe("string");
+  });
+
+  it("maps 'does not consider' language to 既処理論点見落とし and an understanding-insufficient concern, without repeating the assertion", async () => {
+    const a = new HeuristicAnalyzer();
+    const d = CRITIQUE_DOC();
+    const out = await a.analyze("STRAW_MAN_RISK", {
+      sessionId: "t",
+      doc: d,
+      segmentIds: d.segments.map((_, i) => `seg${i}`),
+      planned: { stage: "STRAW_MAN_RISK", state: "FIRED", reason: "", order: 0 },
+      prior: {},
+    });
+    const rows = (out.strawManRiskAudits ?? []) as Record<string, unknown>[];
+    const r = rows[0];
+    expect(r.riskTypes as string[]).toEqual(expect.arrayContaining(["既処理論点見落とし型", "対象理解不足型"]));
+    expect(r.understandingInsufficientConcern).toBe(true);
+    expect(r.alreadyProcessedPoints).toBe("HIGH_RISK");
+
+    // the finding must NOT assert "the target does not consider X"; it limits the claim
+    const f = (out.findings ?? []).find((x) => x.kind.startsWith("STRAW_MAN_RISK"));
+    expect(f).toBeTruthy();
+    expect(f!.detail).toMatch(/一次文献上の確認が不足している|十分に処理されていない|最新立場の確認/);
+    expect(f!.detail).toMatch(/断定は使用しない/);
+  });
+
+  it("flags 旧版固定型 when only an early formulation is used with no acknowledgement of revision", async () => {
+    const a = new HeuristicAnalyzer();
+    const d = CRITIQUE_DOC();
+    const out = await a.analyze("STRAW_MAN_RISK", {
+      sessionId: "t",
+      doc: d,
+      segmentIds: d.segments.map((_, i) => `seg${i}`),
+      planned: { stage: "STRAW_MAN_RISK", state: "FIRED", reason: "", order: 0 },
+      prior: {},
+    });
+    const r = (out.strawManRiskAudits ?? [])[0] as Record<string, unknown>;
+    expect(r.latestPositionAlignment).toBe("HIGH_RISK");
+    expect(r.riskTypes as string[]).toContain("旧版固定型");
+  });
+
+  it("every straw-man finding and row anchors to the document", async () => {
+    const a = new HeuristicAnalyzer();
+    const d = CRITIQUE_DOC();
+    const out = await a.analyze("STRAW_MAN_RISK", {
+      sessionId: "t",
+      doc: d,
+      segmentIds: d.segments.map((_, i) => `seg${i}`),
+      planned: { stage: "STRAW_MAN_RISK", state: "FIRED", reason: "", order: 0 },
+      prior: {},
+    });
+    for (const r of (out.strawManRiskAudits ?? []) as { groundRefs: unknown[] }[]) {
+      expect(r.groundRefs.length).toBeGreaterThan(0);
+    }
+    for (const f of out.findings ?? []) {
+      if (f.source !== "DOCUMENT") expect((f.groundRefs ?? []).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("does not mark every dimension HIGH_RISK for a careful, primary-sourced, charitable critique", async () => {
+    const a = new HeuristicAnalyzer();
+    const d = doc(
+      "We take issue with Millikan's teleosemantics. On the most charitable reading, Millikan argues " +
+        "(Millikan, 1984; Millikan, 2004) that content is fixed by evolutionary function. We engage the " +
+        "strongest version of this view, including her later qualifications about derived proper functions. " +
+        "Our objection is narrow: even granting the mature account, the framework leaves the content of " +
+        "one-off representations underdetermined. This is a genuine limitation, though it does not refute " +
+        "the programme as a whole.",
+    );
+    const out = await a.analyze("STRAW_MAN_RISK", {
+      sessionId: "t",
+      doc: d,
+      segmentIds: d.segments.map((_, i) => `seg${i}`),
+      planned: { stage: "STRAW_MAN_RISK", state: "FIRED", reason: "", order: 0 },
+      prior: {},
+    });
+    const rows = (out.strawManRiskAudits ?? []) as Record<string, unknown>[];
+    if (rows.length > 0) {
+      const r = rows[0];
+      const dims = [
+        r.primaryLiterature,
+        r.latestPositionAlignment,
+        r.alreadyProcessedPoints,
+        r.strongVersionResponse,
+        r.centralPropositionRepr,
+        r.conceptLevelAccuracy,
+      ];
+      expect(dims.every((v) => v === "HIGH_RISK")).toBe(false);
+      expect(r.understandingInsufficientConcern).toBe(false);
+    }
+  });
+
+  it("provides the strongest-reconstruction-first revision principle and a 5-stage scaffold", async () => {
+    const a = new HeuristicAnalyzer();
+    const d = CRITIQUE_DOC();
+    const out = await a.analyze("STRAW_MAN_RISK", {
+      sessionId: "t",
+      doc: d,
+      segmentIds: d.segments.map((_, i) => `seg${i}`),
+      planned: { stage: "STRAW_MAN_RISK", state: "FIRED", reason: "", order: 0 },
+      prior: {},
+    });
+    const r = (out.strawManRiskAudits ?? [])[0] as Record<string, unknown>;
+    expect(String(r.strongerReconstruction).length).toBeGreaterThan(20);
+    expect(String(r.reviseWhileKeepingCritique)).toMatch(/does not reject the criticism/);
+    const five = r.fiveStage as Record<string, unknown>;
+    for (const k of ["claim", "targetPosition", "primaryEvidence", "strongestReconstruction", "critique"]) {
+      expect(five[k]).toBeDefined();
+    }
   });
 });
