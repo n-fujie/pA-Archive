@@ -225,6 +225,16 @@ withdrawn records.
 **Seed** — 7 licenses (idempotent), demo users, and (dev only) exactly one sample
 record. The sample record is **never** created when `NODE_ENV=production`.
 
+**Research-audit layer** (`AUDIT_ENABLED`, dark by default) — a document-upload
+route (`/audit`) that parses a research document and runs a 15-stage audit of
+**how its claims are generated** (categories, configuration, dependencies,
+history, boundaries, scales, inference, simulation, review, institutional
+conditions) and **where they could be revised** — without judging the document
+true or false. Every finding links to a passage; evaluation axes are qualitative
+and never summed into a score; Phase 1 runs no AI. The Ziran orchestration layer
+fires stages per document, not always-on. Full design + consistency audit:
+[`docs/RESEARCH_AUDIT_LAYER.md`](docs/RESEARCH_AUDIT_LAYER.md).
+
 ---
 
 ## 2. Not implemented (future work)

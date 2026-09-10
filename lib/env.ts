@@ -89,6 +89,13 @@ export const env = {
 
   allowOpenSignup: bool("ALLOW_OPEN_SIGNUP", true),
 
+  // --- Research-audit layer (upper-design update) -------------------------
+  // Dark by default. When false: no /audit routes, no nav link, no API.
+  auditEnabled: bool("AUDIT_ENABLED", false),
+  auditMaxDocBytes: int("AUDIT_MAX_DOC_BYTES", 20_971_520), // 20 MiB
+  // Reserved for a future LLM analyzer; unused in phase 1.
+  auditLlmEnabled: bool("AUDIT_LLM_ENABLED", false),
+
   // --- Seeding (development only) -------------------------------------------
   // Demo users / sample record are created ONLY when SEED_DEMO_USERS=true AND
   // NODE_ENV !== production. There is no default password anywhere.

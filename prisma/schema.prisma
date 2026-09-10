@@ -163,6 +163,7 @@ model User {
   auditLogs          AuditLog[]
   sessions           Session[]
   accounts           Account[]
+  auditSessions      AuditSession[]     @relation("AuditUploader")
 
   @@index([role])
   @@map("users")
@@ -258,6 +259,7 @@ model Record {
   downloadEvents DownloadEvent[]
   relationsFrom  Relationship[]   @relation("RelationSource")
   relationsTo    Relationship[]   @relation("RelationTarget")
+  auditSessions  AuditSession[]   @relation("AuditRecordLink")
 
   @@index([status])
   @@index([category])
@@ -559,4 +561,480 @@ model Counter {
   value Int    @default(0)
 
   @@map("counters")
+}
+
+// ===========================================================================
+// Research-audit layer (upper-design update — 2026-09)
+//
+// This layer is additive. It does not modify the repository/record/DOI/review
+// tables above, and every model here is namespaced `audit_*`.
+//
+// Design commitments encoded in the SHAPE of these models (see lib/ziran/):
+//  - The Ziran orchestration layer (ZiranRun / ZiranStageActivation) records
+//    which audit operations FIRED and why. It is not an always-on system:
+//    stages can be SUSPENDED / TERMINATED / NOT_APPLICABLE with a recorded
+//    reason, and `customState` allows change forms beyond the named set.
+//  - Every AuditFinding carries `source` (DOCUMENT vs AI_INFERENCE vs
+//    HEURISTIC) and `groundRefs` (spans back into the document). Findings are
+//    never generated from model output with no document anchor.
+//  - No model here stores a single "quality"/"scientificness"/"truth" score.
+//    EvaluationAxisReading values are text only and are never aggregated.
+//  - `kind` / `changeForm` / `axis` fields are String, not enum: the named
+//    values in lib are a current, revisable vocabulary, not a fixed set.
+// ===========================================================================
+
+enum AuditSessionStatus {
+  RECEIVED
+  PARSING
+  ORCHESTRATING
+  ANALYZING
+  READY
+  FAILED
+}
+
+enum AuditFindingSource {
+  DOCUMENT      // extracted verbatim / structurally from the uploaded document
+  HEURISTIC     // produced by a deterministic rule over the document text
+  AI_INFERENCE  // produced by a model; always logged as an AiOperation
+  MIXED
+}
+
+// The 15 processing stages of the spec. The orchestrator decides per session
+// which of these fire; NOT_APPLICABLE is a first-class outcome.
+enum AuditStage {
+  STRUCTURE            // 1  document structure parsing
+  CATEGORIES           // 2  main-category extraction
+  CATEGORY_IGNITION    // 3  category-establishment audit
+  WEAK_OPERATIONAL     // 4  re-analysis with weaker operational vocabulary
+  TRANSITION           // 5  transition audit
+  HISTORY_REINJECTION  // 6  history-reinjection audit
+  BOUNDARY_SCALE       // 7  boundary & scale audit
+  ADDRESS_DOMAIN       // 8  address / domain analysis
+  CLAIM_EVIDENCE       // 9  local claim–evidence audit
+  DOI_REVIEW           // 10 connect to existing DOI / review
+  SIMULATION           // 11 simulation-possibility detection
+  COUNTERFACTUAL       // 12 counterexample / counterfactual audit
+  THEORY_MINE          // 13 theory-mine audit
+  REGRESSION           // 14 regression audit (bidirectional)
+  REPORT               // 15 auto-audit report generation
+}
+
+enum StageActivationState {
+  FIRED
+  SUSPENDED
+  TERMINATED
+  RECLASSIFIED
+  NOT_APPLICABLE
+}
+
+model AuditSession {
+  id           String             @id @default(cuid())
+  uploaderId   String
+  status       AuditSessionStatus @default(RECEIVED)
+  // Optional link to an existing archive record (matched by DOI or PAID).
+  recordId     String?
+  title        String?
+  methodologyVersion String        @default("audit-layer-2026-09-phase1")
+  failureReason String?           @db.Text
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  completedAt  DateTime?
+
+  uploader   User             @relation("AuditUploader", fields: [uploaderId], references: [id])
+  record     Record?          @relation("AuditRecordLink", fields: [recordId], references: [id], onDelete: SetNull)
+  document   SourceDocument?
+  ziranRun   ZiranRun?
+  segments   DocumentSegment[]
+  categories AuditCategory[]
+  findings   AuditFinding[]
+  transitions        TransitionClaim[]
+  dependencies       DependencyEdge[]
+  historyReinjections HistoryReinjection[]
+  addressNodes       AddressNode[]
+  claimEvidence      ClaimEvidenceLink[]
+  simulationCandidates SimulationCandidate[]
+  theoryMines        TheoryMineFinding[]
+  regressions        RegressionFinding[]
+  theoryFeedback     TheoryFeedback[]
+  evaluationAxes     EvaluationAxisReading[]
+  aiOperations       AiOperation[]
+  report             AuditReport?
+
+  @@index([uploaderId])
+  @@index([status])
+  @@index([recordId])
+  @@map("audit_sessions")
+}
+
+model SourceDocument {
+  id             String   @id @default(cuid())
+  sessionId      String   @unique
+  originalName   String
+  contentType    String
+  byteSize       Int
+  checksumSha256 String
+  storageProvider String
+  storageKey     String
+  extractedText  String   @db.Text
+  pageCount      Int?
+  wordCount      Int?
+  parserName     String
+  parserVersion  String
+  createdAt      DateTime @default(now())
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("audit_source_documents")
+}
+
+// Parsed structure. Only segments the parser can actually identify are
+// created — a document with no "methods" section produces no METHOD segment.
+enum DocumentSegmentKind {
+  TITLE
+  ABSTRACT
+  SECTION
+  SUBSECTION
+  PARAGRAPH
+  CITATION
+  REFERENCE
+  FIGURE
+  TABLE
+  EQUATION
+  DATA_STATEMENT
+  METHOD
+  RESULT
+  CONCLUSION
+  OTHER
+}
+
+model DocumentSegment {
+  id        String             @id @default(cuid())
+  sessionId String
+  kind      DocumentSegmentKind
+  label     String?
+  order     Int
+  charStart Int
+  charEnd   Int
+  text      String             @db.Text
+  parentId  String?
+
+  session AuditSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  parent  DocumentSegment? @relation("SegmentTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children DocumentSegment[] @relation("SegmentTree")
+
+  @@index([sessionId, order])
+  @@map("audit_document_segments")
+}
+
+// The Ziran orchestration record: which audit operations were composed for
+// this document and why. Not an ontology, not always-on.
+model ZiranRun {
+  id                String   @id @default(cuid())
+  sessionId         String   @unique
+  methodologyVersion String  @default("ziran-orchestration-2026-09-phase1")
+  vocabularyNote    String   @db.Text @default("difference/state/transition/dependency/relation/time/scale/boundary/history/access/configuration are the current revisable analytical vocabulary, adopted only where discriminating — not a final ontology.")
+  planNote          String?  @db.Text
+  createdAt         DateTime @default(now())
+
+  session     AuditSession           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  activations ZiranStageActivation[]
+
+  @@map("audit_ziran_runs")
+}
+
+model ZiranStageActivation {
+  id          String               @id @default(cuid())
+  runId       String
+  stage       AuditStage
+  state       StageActivationState
+  // A change form outside {FIRED,SUSPENDED,TERMINATED,RECLASSIFIED,NOT_APPLICABLE}
+  // is recorded here rather than forcing it into the enum.
+  customState String?
+  reason      String               @db.Text
+  segmentScope Json?               // which segments / char ranges this fired over
+  order       Int
+  firedAt     DateTime             @default(now())
+
+  run ZiranRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, stage])
+  @@index([runId, order])
+  @@map("audit_ziran_stage_activations")
+}
+
+model AuditCategory {
+  id                       String   @id @default(cuid())
+  sessionId                String
+  term                     String
+  surfaceForms             String[] @default([])
+  firstSegmentId           String?
+  // null = the audit could not determine this
+  treatedAsGiven           Boolean?
+  establishmentConditions  String?  @db.Text
+  constrainsSubsequent     String   @default("UNKNOWN") // LOW | MEDIUM | HIGH | UNKNOWN
+  createdAt                DateTime @default(now())
+
+  session   AuditSession           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  ignition  CategoryIgnitionRecord[]
+
+  @@index([sessionId])
+  @@map("audit_categories")
+}
+
+model CategoryIgnitionRecord {
+  id                          String   @id @default(cuid())
+  categoryId                  String
+  // Current vocabulary: IGNITION | SUSPENSION | TERMINATION | RECLASSIFICATION.
+  // Other change forms go in `customForm`.
+  changeForm                  String
+  customForm                  String?
+  segmentId                   String?
+  impliedConditions           String   @db.Text @default("")
+  persistsUnderBoundaryChange String   @default("UNKNOWN") // YES | NO | UNKNOWN
+  persistsUnderScaleChange    String   @default("UNKNOWN")
+  substitutionChangesInference String  @default("UNKNOWN")
+  analysisHoldsIfSuspended    String   @default("UNKNOWN")
+  note                        String   @db.Text @default("")
+
+  category AuditCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([categoryId])
+  @@map("audit_category_ignition_records")
+}
+
+model AuditFinding {
+  id               String             @id @default(cuid())
+  sessionId        String
+  stage            AuditStage
+  // Current vocabulary (revisable): CATEGORY_FIXATION | INSUFFICIENT_GROUNDS |
+  // INFERENCE_LEAP | BOUNDARY_DEPENDENCE | SCALE_DEPENDENCE |
+  // COUNTEREXAMPLE_CANDIDATE | COUNTERFACTUAL_CANDIDATE | SIMULATABLE |
+  // HISTORY_DEPENDENCE | THEORY_MINE | REGRESSION | TRANSITION | DEPENDENCY |
+  // ADDRESS_CONFIG | CLAIM_EVIDENCE | EXISTING_THEORY_COUNTEREXAMPLE |
+  // UNDECIDED | NEEDS_INVESTIGATION | ...
+  kind             String
+  summary          String
+  detail           String             @db.Text @default("")
+  source           AuditFindingSource
+  inferencePath    String             @db.Text @default("")
+  groundRefs       Json               @default("[]") // [{segmentId,charStart,charEnd,quote}]
+  uncertaintyText  String             @db.Text @default("")
+  undecidable      Boolean            @default(false)
+  needsVerification Boolean           @default(false)
+  severity         String?            // INFO | LOW | MEDIUM | HIGH | null
+  aiOperationId    String?
+  createdAt        DateTime           @default(now())
+
+  session      AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  aiOperation  AiOperation? @relation(fields: [aiOperationId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId, stage])
+  @@index([sessionId, kind])
+  @@map("audit_findings")
+}
+
+model TransitionClaim {
+  id                  String   @id @default(cuid())
+  sessionId           String
+  fromState           String
+  toState             String
+  enablingConditions  String   @db.Text @default("")
+  disablingConditions String   @db.Text @default("")
+  dependencyNotes     String   @db.Text @default("")
+  conditionSensitivity String  @db.Text @default("")
+  boundaryScaleVariance String @db.Text @default("")
+  groundRefs          Json     @default("[]")
+  source              AuditFindingSource @default(HEURISTIC)
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("audit_transition_claims")
+}
+
+model DependencyEdge {
+  id        String   @id @default(cuid())
+  sessionId String
+  fromLabel String
+  toLabel   String
+  kind      String   @default("OTHER") // REQUIRES | CONSTRAINS | ENABLES | DERIVED_FROM | OTHER
+  note      String   @db.Text @default("")
+  groundRefs Json    @default("[]")
+  source    AuditFindingSource @default(HEURISTIC)
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("audit_dependency_edges")
+}
+
+model HistoryReinjection {
+  id                     String   @id @default(cuid())
+  sessionId              String
+  pastKind               String   // MEASUREMENT | CITATION | CLASSIFICATION | REVIEW | MODEL_SELECTION | FAILURE | SIMULATION | INSTITUTIONAL_JUDGMENT | OTHER
+  pastDescription        String   @db.Text
+  reinjectedIntoKind     String   // RESEARCH_DESIGN | CLASSIFICATION | INFERENCE | ACCESS | PARAMETER | CONCLUSION | OTHER
+  reinjectionDescription String   @db.Text
+  groundRefs             Json     @default("[]")
+  source                 AuditFindingSource @default(HEURISTIC)
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("audit_history_reinjections")
+}
+
+model AddressNode {
+  id             String   @id @default(cuid())
+  sessionId      String
+  kind           String   // INSTITUTE | UNIVERSITY | COMPANY | STATE | PUBLISHER | FUNDER | GRANT | COMPUTE | DATA_INFRA | MODEL | INSTRUMENT | NETWORK | REGION | INSTITUTION | REVIEW_STRUCTURE | OTHER
+  label          String
+  roleInGeneration String @db.Text @default("")
+  influencesOn   Json     @default("[]") // subset of [category, access, resource, inference, evaluation, publishability]
+  groundRefs     Json     @default("[]")
+  source         AuditFindingSource @default(DOCUMENT)
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("audit_address_nodes")
+}
+
+model ClaimEvidenceLink {
+  id                    String   @id @default(cuid())
+  sessionId             String
+  claimText             String   @db.Text
+  claimSegmentId        String?
+  directGroundRefs      Json     @default("[]")
+  citationGroundRefs    Json     @default("[]")
+  dataGroundRefs        Json     @default("[]")
+  modelDependencyText   String   @db.Text @default("")
+  simulationDependencyText String @db.Text @default("")
+  inferenceCompletionText String @db.Text @default("")
+  counterexampleText    String   @db.Text @default("")
+  alternativeExplanationText String @db.Text @default("")
+  unverifiedPartsText   String   @db.Text @default("")
+  source                AuditFindingSource @default(HEURISTIC)
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("audit_claim_evidence_links")
+}
+
+model SimulationCandidate {
+  id             String   @id @default(cuid())
+  sessionId      String
+  description    String   @db.Text
+  detected       Json     @default("{}") // {stateVariables:[],parameters:[],initialConditions:[],boundaryConditions:[],transitionRules:[],equations:[],predictions:[]}
+  providerHandoff Json    @default("{}") // descriptor for a SimulationProvider — no execution in phase 1
+  varyableInputs Json     @default("[]") // subset of [initialCondition, boundary, scale, parameter, dependencyRemoval, categorySubstitution, counterfactual]
+  groundRefs     Json     @default("[]")
+  source         AuditFindingSource @default(HEURISTIC)
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("audit_simulation_candidates")
+}
+
+model TheoryMineFinding {
+  id             String   @id @default(cuid())
+  sessionId      String
+  claimText      String   @db.Text
+  claimSegmentId String?
+  mineKind       String   // OVER_GENERALIZATION | ONTOLOGICAL_REIFICATION | METAPHOR_REALIZATION | UNOBSERVABLE_MECHANISM_ASSERTION | CATEGORY_OVER_FIXATION | FUTURE_OVER_SPECIFICATION | LOCAL_TO_UNIVERSAL_LEAP | INSTITUTIONAL_TO_TRUTH | OTHER
+  reason         String   @db.Text
+  severity       String   @default("LOW") // LOW | MEDIUM | HIGH
+  groundRefs     Json     @default("[]")
+  source         AuditFindingSource @default(HEURISTIC)
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("audit_theory_mine_findings")
+}
+
+model RegressionFinding {
+  id              String   @id @default(cuid())
+  sessionId       String
+  description     String   @db.Text
+  regressedToWhat String   @db.Text @default("")
+  withinDocument  Boolean  @default(true)
+  groundRefs      Json     @default("[]")
+  source          AuditFindingSource @default(HEURISTIC)
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("audit_regression_findings")
+}
+
+// Stage 14 in reverse: the uploaded document / this implementation may require
+// revising the methodological layer or the current ("latest") theory itself.
+model TheoryFeedback {
+  id             String   @id @default(cuid())
+  sessionId      String
+  targetLayer    String   // METHODOLOGY_LAYER | LATEST_THEORY | ZS_VOCABULARY | OTHER
+  proposedChange String   // MODIFICATION | SUSPENSION | RECLASSIFICATION | OTHER
+  rationale      String   @db.Text
+  groundRefs     Json     @default("[]")
+  source         AuditFindingSource @default(HEURISTIC)
+  status         String   @default("OPEN") // OPEN | ACKNOWLEDGED | DISMISSED
+  createdAt      DateTime @default(now())
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("audit_theory_feedback")
+}
+
+// Evaluation axes fire per object. Never summed into one number.
+model EvaluationAxisReading {
+  id        String   @id @default(cuid())
+  sessionId String
+  axis      String   // EVIDENCE_FIDELITY | REPRODUCIBILITY | BOUNDARY_SENSITIVITY | SCALE_SENSITIVITY | DEPENDENCY_TRANSPARENCY | HISTORY_TRACEABILITY | COUNTEREXAMPLE_RESPONSIVENESS | REVISABILITY | OTHER
+  fired     Boolean  @default(true)
+  reading   String   @db.Text // qualitative only — no score field, by design
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, axis])
+  @@map("audit_evaluation_axis_readings")
+}
+
+// Every model operation is recorded here, even when phase 1 runs none.
+// AI is not a privileged subject: this is an operation log like any other.
+model AiOperation {
+  id                 String   @id @default(cuid())
+  sessionId          String
+  kind               String   // CLASSIFICATION | SUMMARY | REVIEW | COUNTEREXAMPLE_GENERATION | SIMULATION_SETUP | SEARCH | INFERENCE | OTHER
+  model              String?
+  modelVersion       String?
+  inputSummary       String   @db.Text
+  availableInfo      String   @db.Text @default("")
+  settings           Json     @default("{}")
+  executedAt         DateTime @default(now())
+  outputSummary      String   @db.Text
+  downstreamInfluence String  @db.Text @default("")
+
+  session  AuditSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  findings AuditFinding[]
+
+  @@index([sessionId])
+  @@map("audit_ai_operations")
+}
+
+model AuditReport {
+  id          String   @id @default(cuid())
+  sessionId   String   @unique
+  generatedAt DateTime @default(now())
+  // Only the sections that actually apply to this document. Each entry:
+  // { key, title, applicable: true, body }. Non-applicable stages are omitted,
+  // not shown empty.
+  sections    Json     @default("[]")
+
+  session AuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("audit_reports")
 }

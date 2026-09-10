@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getSessionUser } from "@/lib/auth/guards";
 import { hasRole } from "@/lib/auth/guards";
+import { env } from "@/lib/env";
 import { site } from "@/lib/site";
 import { Logo } from "./logo";
 import { SignOutButton } from "./sign-out-button";
@@ -31,6 +32,7 @@ export async function SiteHeader() {
           {user ? (
             <>
               <Link href="/submit">Submit</Link>
+              {env.auditEnabled && <Link href="/audit">Audit</Link>}
               <Link href="/dashboard">Dashboard</Link>
               {hasRole(user.role, "REVIEWER") && <Link href="/review">Review</Link>}
               {hasRole(user.role, "EDITOR") && <Link href="/editor">Editor</Link>}
