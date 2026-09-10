@@ -55,6 +55,13 @@ export interface GroundRef {
   charStart: number;
   charEnd: number;
   quote: string;
+  /**
+   * Optional role of this span in the finding it grounds — used by the
+   * straw-man audit to keep multiple grounds distinct (criticism phrase,
+   * target mention, work/version marker, reconstruction passage, quotation,
+   * temporal qualification, strongest-version passage). Older rows omit it.
+   */
+  role?: string;
 }
 
 /** What an analyzer returns for one stage. Persisted by the pipeline. */

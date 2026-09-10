@@ -124,22 +124,78 @@ export const FALSIFIABILITY_MARKERS = [
 // Stage 15 — Straw-Man Risk / Target Understanding Audit
 // ---------------------------------------------------------------------------
 
-/** Markers that the document is CRITICISING a named position, not just citing it. */
+/**
+ * Markers that the document is CRITICISING a named position — genuinely
+ * evaluative language (limitation / inadequacy / rejection / correction /
+ * comparative deficiency), not mere citation, extension, or neutral compare.
+ */
 export const CRITICISM_MARKERS = [
   "criticis", "critique", "objection to", "we reject", "we deny", "fails to",
-  "is mistaken", "is wrong", "is flawed", "cannot account for", "overlooks",
-  "ignores", "neglects", "misunderstands", "is untenable", "collapses under",
-  "does not hold", "is inadequate", "is insufficient", "is naive", "is confused",
-  "contra ", "against the view", "pace ", "problem with", "the limitation of",
-  "the weakness of", "we take issue with", "runs into difficulty", "is refuted",
-  "is a mistake", "is misguided", "breaks down", "is question-begging",
+  "fails to account for", "fail to account for", "cannot account for",
+  "cannot explain", "leaves unresolved", "leaves unexplained", "underestimates",
+  "overstates", "overestimates", "presupposes", "remains dependent on",
+  "does not yet provide", "is insufficient for", "is restricted to",
+  "is limited to", "must be revised", "needs revision", "we go beyond",
+  "removes the need for", "remains anthropocentric", "retains an ontological privilege",
+  "treats as given", "takes for granted", "is mistaken", "is wrong", "is flawed",
+  "overlooks", "ignores", "neglects", "misunderstands", "is untenable",
+  "collapses under", "does not hold", "is inadequate", "is insufficient",
+  "is naive", "is confused", "contra ", "against the view", "pace ",
+  "problem with", "the limitation of", "the limitations of", "the weakness of",
+  "we take issue with", "runs into difficulty", "is refuted", "is a mistake",
+  "is misguided", "breaks down", "is question-begging", "is incomplete",
+  "does not go far enough", "stops short of",
+  // Japanese equivalents (research documents in Japanese are supported by the
+  // parser; the stage's own output is already Japanese).
+  "批判", "反論", "誤り", "誤って", "不十分", "不十分である", "説明できない",
+  "考慮していない", "見落として", "看過して", "限界がある", "問題がある",
+  "妥当でない", "成り立たない", "改訂が必要", "を超える", "を乗り越え",
+  "依存したまま", "前提にして", "自明視", "所与として",
 ];
 
-/** Markers of a comparative-superiority claim ("our approach is better than X"). */
+/**
+ * Evaluative comparative-superiority markers ("our approach improves on X").
+ * These DO trigger the audit (the superiority claim must be checked against the
+ * strongest version of X) — but the audit never endorses the superiority claim.
+ */
 export const COMPARATIVE_SUPERIORITY_MARKERS = [
-  "unlike", "in contrast to", "superior to", "better than", "improves on",
-  "goes beyond", "avoids the problems of", "does not suffer from",
-  "whereas the standard view", "our account, by contrast", "more adequate than",
+  "superior to", "better than", "improves on", "improves upon", "goes beyond",
+  "go beyond", "avoids the problems of", "does not suffer from", "more adequate than",
+  "our account, by contrast", "whereas the standard view", "overcomes the limitations",
+  "advance on", "an advance over", "removes the need for", "surpasses",
+  "を超える", "を乗り越える", "より優れて", "の問題を回避", "の限界を克服",
+];
+
+/**
+ * Neutral comparison markers. On their OWN these must not fire the audit — a
+ * contrast is not a criticism unless evaluative language is also present.
+ */
+export const NEUTRAL_COMPARISON_MARKERS = [
+  "unlike", "in contrast to", "by contrast", "compared to", "compared with",
+  "whereas", "differs from", "as opposed to", "relative to",
+  "とは異なり", "と対照的に", "に対して",
+];
+
+/**
+ * Neutral attribution / continuation markers. "We extend Smith's model",
+ * "drawing on X", "in the Kantian tradition" — use of a name, not criticism.
+ */
+export const NEUTRAL_ATTRIBUTION_MARKERS = [
+  "we extend", "we build on", "we build upon", "building on", "drawing on",
+  "drawing upon", "following", "in the tradition of", "inspired by", "we adopt",
+  "we borrow", "we use", "we employ", "we draw", "provides useful", "provides a useful",
+  "a useful vocabulary", "useful framework", "in the spirit of", "we adapt",
+  "を用い", "を援用", "に依拠", "を拡張", "を踏まえ",
+];
+
+/**
+ * Markers of plain historical / developmental description ("X's view changed
+ * across his career"). Description alone is not criticism.
+ */
+export const HISTORICAL_DESCRIPTION_MARKERS = [
+  "changed substantially", "changed over", "evolved over", "shifted over",
+  "developed over", "across his career", "across her career", "over the course of",
+  "in different periods", "at different times", "underwent changes",
 ];
 
 /** The single most serious pattern: asserting the target does not think about X.
@@ -221,4 +277,48 @@ export const TRANSLATION_MARKERS = [
   "the German ", "the French ", "the Greek ", "the original reads", "in the original",
   "often translated as", "my translation", "translator renders", "the standard translation",
   "untranslatable", "usually rendered", "the term ", "which we translate as",
+];
+
+// --- Phase 2: evidence-presence detection (document properties only) --------
+
+/** Temporal / version / edition identity of a criticism target. */
+export const TEMPORAL_VERSION_MARKERS = [
+  "early", "late", "later", "mature", "the young", "the older", "in his youth",
+  "first edition", "second edition", "third edition", "revised edition",
+  "new edition", "1st ed", "2nd ed", "revised version", "original version",
+  "version 1", "version 2", "version 3", "v1", "v2", "v3", "release", "phase i",
+  "phase ii", "the original programme", "the revised programme",
+  "初期", "後期", "前期", "中期", "第一版", "第二版", "改訂版", "旧版", "新版",
+];
+
+/** Page / section locators — a sign the attribution points at a specific place. */
+export const PAGE_LOCATOR_MARKERS = [
+  "p. ", "pp. ", "page ", "pages ", "§", "sec. ", "section ", "ch. ", "chapter ",
+  "para. ", "paragraph ", "fn. ", "footnote ", "頁", "ページ", "節", "章",
+];
+
+/** The target itself acknowledging a qualification / exception / limit. */
+export const QUALIFICATION_ACK_MARKERS = [
+  "acknowledges", "acknowledged", "concedes", "conceded", "himself notes",
+  "herself notes", "themselves note", "grants that", "granted that",
+  "admits", "recognises that", "recognizes that", "qualifies this",
+  "adds the proviso", "notes the exception", "restricts this to",
+  "自ら認めて", "留保を付し", "例外を認め", "限定して",
+];
+
+/** A reconstruction of the target's position is being offered (good sign). */
+export const RECONSTRUCTION_MARKERS = [
+  "on this view", "the core claim is", "the central claim is", "the position holds that",
+  "the view holds that", "roughly, the idea is", "the argument runs", "in outline",
+  "the thesis is that", "reconstructed, the argument", "the account states that",
+  "according to this account", "as reconstructed", "the key move is",
+  "の中心的主張は", "の議論は", "この立場は",
+];
+
+/** The objection is explicitly narrow / conditional (raises critique-survival). */
+export const NARROW_OBJECTION_MARKERS = [
+  "our objection is narrow", "the limited point", "a restricted claim",
+  "we do not claim that", "this is not to say", "even granting", "even if we grant",
+  "our point is only", "the narrow point", "conditional on", "to the extent that",
+  "限定的な", "狭い意味で", "その限りで",
 ];

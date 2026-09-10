@@ -302,10 +302,233 @@ describe("Straw-Man Risk / Target-Understanding audit — stage 15", () => {
     });
     const r = (out.strawManRiskAudits ?? [])[0] as Record<string, unknown>;
     expect(String(r.strongerReconstruction).length).toBeGreaterThan(20);
-    expect(String(r.reviseWhileKeepingCritique)).toMatch(/does not reject the criticism/);
+    expect(String(r.reviseWhileKeepingCritique)).toMatch(/批判の却下を意味しない|does not reject the criticism/);
     const five = r.fiveStage as Record<string, unknown>;
     for (const k of ["claim", "targetPosition", "primaryEvidence", "strongestReconstruction", "critique"]) {
       expect(five[k]).toBeDefined();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2 — epistemic conservatism, target-version identity, evidence status
+// ---------------------------------------------------------------------------
+
+describe("Straw-Man Risk audit — Phase 2 epistemic conservatism", () => {
+  const run = async (text: string) => {
+    const a = new HeuristicAnalyzer();
+    const d = doc(text);
+    const out = await a.analyze("STRAW_MAN_RISK", {
+      sessionId: "t",
+      doc: d,
+      segmentIds: d.segments.map((_, i) => `seg${i}`),
+      planned: { stage: "STRAW_MAN_RISK", state: "FIRED", reason: "", order: 0 },
+      prior: {},
+    });
+    return { out, rows: (out.strawManRiskAudits ?? []) as Record<string, unknown>[] };
+  };
+  const plannedState = (text: string) =>
+    planAudit(doc(text), { hasDoiOrRecordLink: false }).stages.find((s) => s.stage === "STRAW_MAN_RISK")?.state;
+
+  it("1. citations present but substantive understanding still unverified (never LOW_RISK)", async () => {
+    const { rows } = await run(
+      "We criticise Clark's predictive processing. Clark argues (Clark, 2016, p. 44) that perception is " +
+        "controlled hallucination. This account cannot explain the felt presence of the world.",
+    );
+    const r = rows[0];
+    const dims = [
+      r.primaryLiterature, r.latestPositionAlignment, r.alreadyProcessedPoints,
+      r.strongVersionResponse, r.centralPropositionRepr, r.conceptLevelAccuracy,
+    ];
+    expect(dims).not.toContain("LOW_RISK");
+    // a citation is present, but primary-literature understanding is at best 要確認
+    expect(r.primaryLiterature).not.toBe("LOW_RISK");
+    expect(["DOCUMENT_ONLY", "PRIMARY_EVIDENCE_PRESENT_UNVERIFIED", "VERIFICATION_INSUFFICIENT"]).toContain(
+      r.verificationStatus,
+    );
+    expect(r.verificationStatus).not.toBe("EXTERNALLY_VERIFIED");
+  });
+
+  it("2. same thinker, two explicitly different works → two target identities", async () => {
+    const { rows } = await run(
+      "Negarestani in \"Cyclonopedia\" argues that oil is a sentient entity, which we reject as obscurantist. " +
+        "By contrast Negarestani in \"Intelligence and Spirit\" argues that mind is a functional achievement; " +
+        "this later account fails to account for embodiment and must be revised.",
+    );
+    const labels = rows.map((r) => String(r.targetLabel).toLowerCase());
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(labels.some((l) => l.includes("cyclonopedia"))).toBe(true);
+    expect(labels.some((l) => l.includes("intelligence and spirit"))).toBe(true);
+    for (const r of rows) expect(r.targetVersionResolved).toBe(true);
+  });
+
+  it("3. same thinker, no temporal markers → one unresolved generic target", async () => {
+    const { rows } = await run(
+      "Brandom's inferentialism is mistaken. Brandom argues that meaning is a matter of inferential role. " +
+        "This cannot account for the referential dimension of thought and leaves reference unexplained.",
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].targetVersionResolved).toBe(false);
+    expect(String(rows[0].grounds)).toMatch(/TARGET_VERSION_UNRESOLVED/);
+  });
+
+  it("4. later-position language does not generate unsupported historical claims", async () => {
+    const { out, rows } = await run(
+      "Foucault's early archaeology is inadequate. Foucault argues in his early work that discourse is autonomous. " +
+        "This overlooks the role of institutions.",
+    );
+    const r = rows[0];
+    const blob = JSON.stringify(r) + JSON.stringify(out.findings);
+    expect(blob).not.toMatch(/later abandoned|abandoned this view|Foucault's real position is|failed to consider/i);
+    expect(String(r.recursiveSelfApplicationNote) + String(r.grounds)).toMatch(
+      /時期区分の確認が必要|どの時期の立場を対象としているか|後期立場との整合性は未確認/,
+    );
+  });
+
+  it("5. neutral attribution does not fire", () => {
+    expect(plannedState("This paper uses a Kantian distinction between phenomena and noumena to frame the problem.")).toBe(
+      "NOT_APPLICABLE",
+    );
+    expect(plannedState("The Marxian tradition provides a useful vocabulary, which we adopt throughout.")).toBe(
+      "NOT_APPLICABLE",
+    );
+    expect(plannedState("We extend Smith's model with an additional latent variable.")).toBe("NOT_APPLICABLE");
+  });
+
+  it("6. neutral comparison does not fire", () => {
+    expect(
+      plannedState("Unlike model X, model Y uses a recurrent architecture; both are trained on the same corpus."),
+    ).toBe("NOT_APPLICABLE");
+    expect(plannedState("Foucault's account changed substantially across his career, as many commentators note.")).toBe(
+      "NOT_APPLICABLE",
+    );
+  });
+
+  it("7. comparative-superiority criticism does fire and is not endorsed", async () => {
+    expect(
+      plannedState("Our framework goes beyond Clark's predictive processing by removing the need for internal models."),
+    ).toBe("FIRED");
+    const { rows } = await run(
+      "Our framework goes beyond Clark's predictive processing model and improves on it by removing the need for " +
+        "internal models. Clark argues that the brain is a prediction machine.",
+    );
+    const r = rows[0];
+    expect(r.comparativeSuperiorityUnverified).toBe(true);
+    expect(String(r.grounds)).toMatch(/比較対象の最大強度版との照合が必要/);
+  });
+
+  it("8. temporal overgeneralisation warning when a universal claim rests on one phase", async () => {
+    const { rows } = await run(
+      "Land is fundamentally accelerationist. In his early work, Land (1993) argues that capital is an AI from the " +
+        "future. Land always treats the human as a mere substrate, which is a mistake. Later Land shifted focus.",
+    );
+    const r = rows.find((x) => String(x.targetLabel).toLowerCase().includes("land")) ?? rows[0];
+    const hay = String(r.grounds) + (r.riskTypes as string[]).join(",");
+    expect(hay).toMatch(/一時期の記述を対象全体へ一般化|旧版固定型/);
+  });
+
+  it("9. strongest reconstruction missing → no fabricated reconstruction", async () => {
+    const { rows } = await run(
+      "Dennett's heterophenomenology is untenable. Dennett argues that consciousness is an illusion. " +
+        "We reject this.",
+    );
+    const five = rows[0].fiveStage as Record<string, string>;
+    expect(five.strongestReconstruction).toMatch(/未確定|確認が必要/);
+    expect(five.targetPosition).toMatch(/未確定|確認が必要|未確認/);
+  });
+
+  it("10. no aggregate score is present anywhere in Phase 2 output", async () => {
+    const { out, rows } = await run(
+      "We criticise Clark's predictive processing (Clark, 2016). Clark argues perception is inference. " +
+        "This cannot explain presence.",
+    );
+    for (const r of rows) {
+      for (const k of ["score", "total", "overall", "aggregate", "rating", "grade"]) {
+        expect(r[k]).toBeUndefined();
+      }
+    }
+    for (const ax of out.evaluationAxes ?? []) {
+      expect(typeof ax.reading).toBe("string");
+      expect((ax as Record<string, unknown>).score).toBeUndefined();
+    }
+  });
+
+  it("11. all Phase 2 output remains grounded (row + finding groundRefs, with roles)", async () => {
+    const { out, rows } = await run(
+      "Negarestani in \"Intelligence and Spirit\" (2018) argues that mind is a functional achievement. " +
+        "This fails to account for embodiment and remains dependent on a Sellarsian picture.",
+    );
+    for (const r of rows) {
+      const grefs = r.groundRefs as { charStart: number; charEnd: number; role?: string }[];
+      expect(grefs.length).toBeGreaterThan(0);
+      for (const g of grefs) expect(g.charEnd).toBeGreaterThanOrEqual(g.charStart);
+      expect(grefs.some((g) => g.role)).toBe(true);
+    }
+    for (const f of out.findings ?? []) {
+      if (f.source !== "DOCUMENT") expect((f.groundRefs ?? []).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("12. rows created before Phase 2 (missing new columns) still shape-load", () => {
+    // simulate an old persisted row: only Phase 1 fields, JSON defaults absent
+    const oldRow = {
+      id: "x",
+      targetKind: "PERSON",
+      targetLabel: "Dennett",
+      criticismSummary: "…",
+      targetIdentity: {},
+      targetVersionResolved: false,
+      evidencePresence: {},
+      verificationStatus: "DOCUMENT_ONLY",
+      critiqueSurvival: "UNDETERMINED",
+      comparativeSuperiorityUnverified: false,
+      primaryLiterature: "NEEDS_CHECK",
+      latestPositionAlignment: "UNDETERMINED",
+      alreadyProcessedPoints: "NEEDS_CHECK",
+      strongVersionResponse: "NEEDS_CHECK",
+      centralPropositionRepr: "UNDETERMINED",
+      conceptLevelAccuracy: "UNDETERMINED",
+      riskTypes: [] as string[],
+      mainStrawManRisk: "",
+      grounds: "",
+      strongerReconstruction: "",
+      reviseWhileKeepingCritique: "",
+      fiveStage: {},
+      understandingInsufficientConcern: false,
+      recursiveSelfApplicationNote: "",
+      groundRefs: [],
+      source: "HEURISTIC",
+    };
+    // the view mapper reads these keys defensively — a plain object round-trips
+    expect(Object.keys(oldRow.evidencePresence)).toHaveLength(0);
+    expect(oldRow.verificationStatus).toBe("DOCUMENT_ONLY");
+  });
+
+  it("13. heuristic-only never outputs an unjustified 低リスク on any dimension", async () => {
+    const samples = [
+      "We criticise Clark's predictive processing (Clark, 2016, pp. 10-40). Clark argues perception is inference. On the most charitable reading, the core claim is that priors dominate. Our objection is narrow.",
+      "Millikan's teleosemantics (Millikan, 1984) is engaged at its strongest here; even granting the mature account, one-off representations are underdetermined.",
+      "Brandom acknowledges the referential dimension himself (Brandom, 2000, ch. 6); still, the account is restricted to inferential role.",
+    ];
+    for (const s of samples) {
+      const { rows } = await run(s);
+      for (const r of rows) {
+        for (const dim of [
+          "primaryLiterature", "latestPositionAlignment", "alreadyProcessedPoints",
+          "strongVersionResponse", "centralPropositionRepr", "conceptLevelAccuracy",
+        ]) {
+          expect(r[dim]).not.toBe("LOW_RISK");
+        }
+      }
+    }
+  });
+
+  it("14. Japanese criticism markers are supported", () => {
+    expect(
+      plannedState(
+        "本稿ではフーコーの権力論を批判する。フーコー（Foucault, 1975）は規律権力が偏在すると論じるが、この見解は制度の役割を考慮していない点で不十分である。",
+      ),
+    ).toBe("FIRED");
+    expect(plannedState("本稿ではカント的区別を枠組みとして用いる。")).toBe("NOT_APPLICABLE");
   });
 });

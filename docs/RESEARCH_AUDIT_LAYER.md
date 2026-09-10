@@ -176,6 +176,14 @@ value `AuditStage.STRAW_MAN_RISK` and one table `audit_straw_man_risk_audits`
 `understandingInsufficientConcern Boolean`, FK to `audit_sessions` only). No
 `DROP` / `ALTER COLUMN`.
 
+Migration `20260910030427_straw_man_risk_audit_phase2` — **additive**: six new
+columns on `audit_straw_man_risk_audits` via `ADD COLUMN … DEFAULT`
+(`targetIdentity Jsonb '{}'`, `targetVersionResolved bool false`,
+`evidencePresence Jsonb '{}'`, `verificationStatus text 'DOCUMENT_ONLY'`,
+`critiqueSurvival text 'UNDETERMINED'`, `comparativeSuperiorityUnverified bool false`).
+No `DROP` / `ALTER COLUMN` / enum change. Rows written by `5e8ca76` back-fill to
+the defaults and remain readable.
+
 Tables: `audit_sessions`, `audit_source_documents`, `audit_document_segments`,
 `audit_ziran_runs`, `audit_ziran_stage_activations`, `audit_categories`,
 `audit_category_ignition_records`, `audit_findings`, `audit_transition_claims`,
@@ -252,9 +260,10 @@ proxies. No change to the DOI adapter or the review pages.
 ## 11. Migration policy
 
 - Local: `npm run prisma:migrate`.
-- Production: `npx prisma migrate deploy` (never `db push`). Both audit-layer
+- Production: `npx prisma migrate deploy` (never `db push`). All audit-layer
   migrations (`20260910013559_research_audit_layer`,
-  `20260910020734_straw_man_risk_audit`) are additive; take the normal
+  `20260910020734_straw_man_risk_audit`,
+  `20260910030427_straw_man_risk_audit_phase2`) are additive; take the normal
   pre-migration backup.
 - `AUDIT_ENABLED` stays `false` in production until the layer is reviewed —
   routes 404, no nav link, no API.
@@ -284,19 +293,97 @@ Env added: `AUDIT_ENABLED` (default `false`), `AUDIT_MAX_DOC_BYTES` (default
 
 ## 14a. Straw-Man Risk / Target-Understanding audit (stage 15)
 
-**When it fires.** Only when `detectCriticismTargets` (`lib/research-audit/straw-man.ts`)
-finds both (a) criticism / rebuttal / negative-evaluation / limitation-pointing /
-comparative-superiority language (`CRITICISM_MARKERS`, `COMPARATIVE_SUPERIORITY_MARKERS`)
-and (b) at least one *specific* target — a person ("X argues / X's account"), a named
-system ("the X theory / model / programme / school"), an `-ism`, or an "X's theory of Y".
-No criticism, or no identifiable target → the stage does **not** fire (recorded
-`NOT_APPLICABLE` with the reason). Bare person names are folded into the more
-specific "X's theory of Y" row when both are present.
+**When it fires.** `analyzeCriticismSignals` + `detectCriticismTargets`
+(`lib/research-audit/straw-man.ts`) require both (a) *evaluative* criticism —
+limitation / inadequacy / rejection / correction / comparative-deficiency
+(`CRITICISM_MARKERS`, `COMPARATIVE_SUPERIORITY_MARKERS`); neutral comparison
+(`NEUTRAL_COMPARISON_MARKERS` — "unlike", "in contrast to"), neutral attribution
+(`NEUTRAL_ATTRIBUTION_MARKERS` — "we extend", "drawing on"), plain historical
+description ("X's view changed across his career"), and a *negated* criticism verb
+("nothing turns on criticising X") do **not** fire — and (b) at least one *specific*
+target: a person ("X argues / X's account / criticise X"), a named system ("the X
+theory / the 1986 X model"), the object of a superiority claim ("goes beyond the
+standard X account"), an `-ism` (with owner: "Brandom's inferentialism"), or an
+"X's theory of Y". No evaluative criticism, or no identifiable target → the stage
+is `NOT_APPLICABLE` with the reason.
 
-**What it audits.** Not whether the criticism is correct — whether the target was
-sufficiently understood and reconstructed *before* being criticised (straw-man
-detection: the target simplified, fixated at an old version, weakened, or stripped
-of its own limiting conditions before rebuttal).
+**What it audits.** Not whether the criticism is correct — whether the target has
+been *identified and reconstructed with enough fidelity for the criticism to count
+as a completed criticism* rather than a potentially weak reconstruction. Straw-man
+detection: target simplified, fixated at an old version, weakened, stripped of its
+own limiting conditions, or (Phase 2) criticised as an undifferentiated name when
+the document itself makes a version/period distinction available.
+
+### Phase 2 — epistemic conservatism (commit after `5e8ca76`)
+
+The heuristic layer must not pretend to know more about a target than the document
+permits. Three things are recorded **separately** and never conflated:
+
+| field | question |
+|---|---|
+| `evidencePresence` (JSON) | *What material is in the submission?* — mechanical booleans: criticism phrase, direct quotation, citation near criticism, named primary work, publication year/version, page/section locator, target-position reconstruction, qualification acknowledged, later-development discussed, strongest-version reconstruction. Each carries a `groundRef`. |
+| `verificationStatus` | *Was that material actually checked?* — `DOCUMENT_ONLY` / `PRIMARY_EVIDENCE_PRESENT_UNVERIFIED` / `VERIFICATION_INSUFFICIENT`. The heuristic layer **never** reaches `EXTERNALLY_VERIFIED`. |
+| six dimensions + `riskTypes` | *Given the above, how risky is the reconstruction?* |
+
+**A citation is evidence that checking may have occurred — not that it was
+correct.** So the heuristic layer **never emits `低リスク` (`LOW_RISK`)** on any
+dimension (a `dimNoLow` safety net enforces this): the best a marker-only pass
+returns is `要確認`; genuinely ambiguous → `判定不能`; a straw-man indicator → `高リスク`.
+The absence of evidence may justify a risk warning; the presence of citations may
+not by itself justify confidence.
+
+**Target-version identity** (`targetIdentity` JSON: `canonicalName`, `targetKind`
+∈ PERSON/WORK/THEORY/MODEL/PROGRAMME/SCHOOL/ISM/OTHER, `workTitle?`,
+`publicationYear?`, `editionOrVersion?`, `periodLabel?`, `explicitlyTemporal`).
+Extracted only from document-grounded cues tightly bound to a mention ("early
+Foucault", "in his early work, X", "X (1993)", "X in \"Work\"", "revised edition").
+A canonical name whose mentions carry **distinct** period/work signatures is
+**split into separate targets** ("early Sellars" vs "account of picturing") — no
+cross-version contamination. When no version cue exists the generic target is kept
+with `targetVersionResolved = false` and the grounds carry `TARGET_VERSION_UNRESOLVED`.
+A universal claim about the bare name while only one phase is engaged →
+`temporalOvergeneralisation` → risk type `旧版固定型` + note
+「一時期の記述を対象全体へ一般化している可能性」. Bare person names fold into a richer
+same-person target (their `-ism` / theory / work) **unless** the richer target
+carries a period/work identity the bare mention lacks.
+
+**Recursive self-revision** (`recursiveSelfApplicationNote`) — operational when the
+target is `explicitlyTemporal`, or self-revision / historical-change language is
+present: five questions (which version is criticised? is the criticism restricted
+to it? is a later self-correction ignored? is a later position projected backward?
+is an early position treated as permanent?). Uses only
+「時期区分の確認が必要」/「対象の後期立場との整合性は未確認」/
+「当該批判がどの時期の立場を対象としているか不明」— never "X later abandoned this",
+"X failed to consider", "X's real position is".
+
+**`critiqueSurvival`** (NOT a seventh score) — `CRITIQUE_NOT_YET_TESTED_AGAINST_STRONGEST_TARGET`
+(default) / `CRITIQUE_REQUIRES_REFORMULATION` (≥2 HIGH_RISK dims + understanding
+concern) / `CRITIQUE_APPEARS_STRUCTURALLY_PRESERVABLE` (narrow objection +
+strongest-version reconstruction + zero risk types — rare under heuristic
+analysis) / `UNDETERMINED`.
+
+**Comparative superiority** — `comparativeSuperiorityUnverified` is set only when a
+superiority marker and the target sit in the **same sentence**; the grounds then
+carry 「比較優位主張は検出されたが、比較対象の最大強度版との照合が必要」and the audit
+never endorses the superiority claim. At **report-assembly** time
+(`persistReport`) any such row produces a `NOVELTY_GUARD` section:
+「比較対象理解が未確定のため、この差分を新規性の確定根拠として使用しない」— so a
+downstream "new / beyond X" claim is not treated as established novelty while the
+target-understanding risk is open. (No cyclic pipeline dependency — the two
+signals meet in the report.)
+
+**Five-stage scaffold** — when stages 2–4 (Target Position / Primary Evidence /
+Strongest Reconstruction) cannot be filled from the document they are **not
+fabricated**: they read 「未確定。対象自身による限定・例外・後期修正の一次文献確認が必要。」
+
+**Grounding at every level** — each row's `groundRefs` carries multiple entries
+with a `role`: `target-mention`, `criticism-phrase`, `temporal-qualification`,
+`publication-year`, `work-version-marker`, `quotation`, `reconstruction-passage`.
+`GroundRef.role` is an optional field (older rows omit it).
+
+**Known limitation** — a comparative claim whose object is a lowercase phrase with
+no proper-noun head and no `account/view/model/...` descriptor may not be extracted
+as a target; the superiority claim then goes unaudited.
 
 **Ten audit items** drive six **independently-displayed** dimensions — never summed:
 
@@ -329,16 +416,21 @@ consider this problem" — the finding text is limited to
 finding kind to `STRAW_MAN_RISK_UNDERSTANDING_INSUFFICIENT` with the banner
 「対象理解不足による藁人形化懸念」— the criticism is **not** approved as complete.
 
-**Model**: `audit_straw_man_risk_audits` (one row per target). `EvaluationAxisReading`
-axis `TARGET_UNDERSTANDING` is text only. UI: Advanced view → "Straw-Man Risk Audit"
-panel (per-target cards with the six dimension badges) + Standard "Audit" tab.
+**Model**: `audit_straw_man_risk_audits` (one row per target; Phase 2 adds
+`targetIdentity`, `targetVersionResolved`, `evidencePresence`, `verificationStatus`,
+`critiqueSurvival`, `comparativeSuperiorityUnverified` — all additive, all
+defaulted, so rows from `5e8ca76` still load). `EvaluationAxisReading` axis
+`TARGET_UNDERSTANDING` is text only. UI: Advanced view → "Straw-Man Risk Audit"
+panel (per-target cards: target identity, TARGET_VERSION_UNRESOLVED warning,
+evidence-present list, verification / critique-survival badges, the six dimension
+badges, risk types, the narrative fields, the 5-stage scaffold) + Standard "Audit"
+tab.
 
-**Phase 1 is heuristic.** It matches marker lexicons and citation shapes; it cannot
-read the primary literature. Every dimension defaults toward 要確認 / 判定不能, and
-the stage's own copy says reconstruction against primary sources is still required
-before any criticism is treated as settled. A future LLM analyzer would fill the
-5-stage reconstruction with actual primary-source content (source `AI_INFERENCE`,
-grounded).
+**Phase 1/2 is heuristic.** It matches marker lexicons, citation shapes and
+version cues; it cannot read the primary literature. A future LLM analyzer would
+fill the 5-stage reconstruction and move `verificationStatus` past
+`PRIMARY_EVIDENCE_PRESENT_UNVERIFIED` with actual primary-source content (source
+`AI_INFERENCE`, grounded) — only that layer may emit `低リスク`.
 
 ---
 

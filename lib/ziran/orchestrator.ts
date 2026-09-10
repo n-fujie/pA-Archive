@@ -5,14 +5,12 @@ import {
   ADDRESS_MARKERS,
   BOUNDARY_MARKERS,
   CANDIDATE_CATEGORIES,
-  COMPARATIVE_SUPERIORITY_MARKERS,
-  CRITICISM_MARKERS,
   HISTORY_MARKERS,
   SCALE_MARKERS,
   SIMULATION_MARKERS,
   TRANSITION_MARKERS,
 } from "@/lib/research-audit/lexicon";
-import { detectCriticismTargets } from "@/lib/research-audit/straw-man";
+import { analyzeCriticismSignals, detectCriticismTargets } from "@/lib/research-audit/straw-man";
 import { AUDIT_STAGES, type PlannedStage, type ZiranPlan } from "./types";
 
 const METHODOLOGY_VERSION = "ziran-orchestration-2026-09-phase1";
@@ -127,21 +125,27 @@ export function planAudit(doc: ParsedDocument, opts: { hasDoiOrRecordLink: boole
   //     comparative superiority over a *specific* person / theory / school /
   //     thought-system / scientific model / research programme. If there is no
   //     such criticism it does not fire.
-  const critN = anyMarker(text, CRITICISM_MARKERS);
-  const compN = anyMarker(text, COMPARATIVE_SUPERIORITY_MARKERS);
-  const smTargets = detectCriticismTargets(doc);
-  if ((critN >= 1 || compN >= 1) && smTargets.length > 0) {
+  const sig = analyzeCriticismSignals(doc);
+  const hasEvaluativeCriticism = sig.criticismCount >= 1 || sig.comparativeSuperiorityCount >= 1;
+  const smTargets = hasEvaluativeCriticism ? detectCriticismTargets(doc) : [];
+  if (hasEvaluativeCriticism && smTargets.length > 0) {
+    const unresolved = smTargets.filter((t) => !t.versionResolved).length;
     fire(
       "STRAW_MAN_RISK",
-      `${critN} criticism marker(s) and ${compN} comparative-superiority marker(s); ${smTargets.length} candidate target(s) of criticism identified (${smTargets
+      `${sig.criticismCount} criticism marker(s) and ${sig.comparativeSuperiorityCount} comparative-superiority marker(s); ${smTargets.length} candidate target(s) of criticism identified (${smTargets
         .slice(0, 4)
         .map((t) => t.label)
-        .join(", ")}${smTargets.length > 4 ? ", …" : ""}). Audits whether each target was reconstructed at its strongest before being criticised.`,
+        .join(", ")}${smTargets.length > 4 ? ", …" : ""})${unresolved > 0 ? `; ${unresolved} with unresolved version/period identity` : ""}. Audits whether each target was identified and reconstructed with enough fidelity for the criticism to count as complete — not whether the criticism is right.`,
     );
-  } else if (critN >= 1 || compN >= 1) {
+  } else if (hasEvaluativeCriticism) {
     skip(
       "STRAW_MAN_RISK",
-      "Criticism / comparative-superiority language is present, but no specific person, theory, school, thought-system, scientific model, or research programme could be identified as its target.",
+      "Criticism / comparative-superiority language is present, but no specific person, work, theory, model, programme, school, or -ism could be identified as its target.",
+    );
+  } else if (sig.neutralOnly) {
+    skip(
+      "STRAW_MAN_RISK",
+      "A named position is used, compared, or historically described, but no limitation / inadequacy / rejection / correction / comparative-deficiency claim is asserted — a contrast or an attribution is not a criticism.",
     );
   } else {
     skip(

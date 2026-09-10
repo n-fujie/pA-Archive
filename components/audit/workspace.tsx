@@ -376,12 +376,33 @@ function AdvancedPanel({
           </p>
         </div>
         {audits.length === 0 && <Empty>Straw-man risk audit did not fire, or isolated no specific criticised target.</Empty>}
-        {audits.map((a) => (
+        {audits.map((a) => {
+          const id = a.targetIdentity as Record<string, unknown>;
+          const idParts = [
+            id.periodLabel ? `period: ${String(id.periodLabel)}` : null,
+            id.workTitle ? `work: ${String(id.workTitle)}` : null,
+            id.editionOrVersion ? `version: ${String(id.editionOrVersion)}` : null,
+            id.publicationYear ? `year: ${String(id.publicationYear)}` : null,
+          ].filter(Boolean) as string[];
+          const evPresent = Object.entries(a.evidencePresence)
+            .filter(([, v]) => v)
+            .map(([k]) => k);
+          return (
           <article key={a.id} className="card space-y-2 p-3 text-sm">
             <div className="flex flex-wrap items-center gap-2">
               <span className="badge badge-doi">{a.targetKind.replace(/_/g, " ").toLowerCase()}</span>
               <p className="font-medium">{a.targetLabel}</p>
             </div>
+
+            {idParts.length > 0 ? (
+              <p className="text-[11px] text-ink-muted">target identity — {idParts.join(" · ")}</p>
+            ) : null}
+            {!a.targetVersionResolved && (
+              <p className="rounded-sm border border-warn/40 bg-warn/5 p-2 text-[11px] text-warn">
+                TARGET_VERSION_UNRESOLVED — 当該批判がどの時期/版の立場を対象としているか不明。時期区分の確認が必要。
+              </p>
+            )}
+
             <p className="text-xs text-ink-soft">{a.criticismSummary}</p>
 
             {a.understandingInsufficientConcern && (
@@ -389,6 +410,19 @@ function AdvancedPanel({
                 対象理解不足による藁人形化懸念 — この批判は「完結した批判」として承認しない。まず一次文献から対象を再構成すること。
               </p>
             )}
+            {a.comparativeSuperiorityUnverified && (
+              <p className="rounded-sm border border-warn/40 bg-warn/5 p-2 text-[11px] text-warn">
+                比較優位主張は検出されたが、比較対象の最大強度版との照合が必要（優位主張自体は承認しない）。
+              </p>
+            )}
+
+            <div className="flex flex-wrap gap-2 text-[11px] text-ink-muted">
+              <span>evidence present: {evPresent.length > 0 ? evPresent.join(", ") : "（なし）"}</span>
+            </div>
+            <div className="flex flex-wrap gap-1 text-[11px]">
+              <span className="badge badge-doi">verification: {a.verificationStatus.toLowerCase()}</span>
+              <span className="badge badge-doi">critique: {a.critiqueSurvival.replace(/_/g, " ").toLowerCase()}</span>
+            </div>
 
             <div className="grid grid-cols-2 gap-1.5">
               {STRAW_MAN_DIMENSIONS.map((d) => {
@@ -402,6 +436,9 @@ function AdvancedPanel({
                 );
               })}
             </div>
+            <p className="text-[10px] text-ink-faint">
+              ヒューリスティック層は「低リスク」を出力しない。引用の存在は照合が行われた可能性の証拠であって、照合が正しかった証拠ではない。
+            </p>
 
             {a.riskTypes.length > 0 && (
               <div className="flex flex-wrap gap-1">
@@ -417,7 +454,7 @@ function AdvancedPanel({
             <Field label="批判を維持したまま修正する方法" value={a.reviseWhileKeepingCritique} />
 
             {a.recursiveSelfApplicationNote && (
-              <Field label="自己適用の限界（自己修正を掲げる思想家の場合）" value={a.recursiveSelfApplicationNote} />
+              <Field label="自己修正的対象への批判：時期/版の確認" value={a.recursiveSelfApplicationNote} />
             )}
 
             <details className="text-xs">
@@ -431,7 +468,8 @@ function AdvancedPanel({
               </ul>
             </details>
           </article>
-        ))}
+          );
+        })}
         <FindingList findings={findingsFor(["STRAW_MAN_RISK"])} jump={jump} empty="" />
       </div>
     );

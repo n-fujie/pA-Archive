@@ -991,7 +991,36 @@ model StrawManRiskAudit {
   targetLabel        String
   criticismSummary   String   @db.Text
 
+  // --- Phase 2: target-version identity (document-grounded only) -----------
+  // { canonicalName, targetKind, workTitle?, publicationYear?, editionOrVersion?,
+  //   periodLabel?, explicitlyTemporal }. Empty {} for rows created before Phase 2.
+  targetIdentity     Json     @default("{}")
+  // True when a work / edition / version / period could be resolved from the
+  // document; false → the criticism is addressed to an undifferentiated name and
+  // riskTypes carries a temporal-overgeneralisation flag where relevant.
+  targetVersionResolved Boolean @default(false)
+
+  // --- Phase 2: evidence / verification separated from risk ----------------
+  // Mechanical document properties only (what material exists in the submission):
+  // { criticismPhrase, directQuotation, citationNearCriticism, namedPrimaryWork,
+  //   publicationYearOrVersion, pageOrSectionLocator, targetPositionReconstruction,
+  //   qualificationAcknowledged, laterDevelopmentDiscussed, strongestVersionReconstruction }
+  evidencePresence   Json     @default("{}")
+  // Whether the material was actually checked. Phase 1/2 heuristic never reaches
+  // EXTERNALLY_VERIFIED. Value: NOT_REQUIRED | DOCUMENT_ONLY |
+  // PRIMARY_EVIDENCE_PRESENT_UNVERIFIED | EXTERNALLY_VERIFIED | VERIFICATION_INSUFFICIENT
+  verificationStatus String  @default("DOCUMENT_ONLY")
+  // NOT a score. Whether the criticism looks preservable once the target is
+  // strengthened. Value: CRITIQUE_NOT_YET_TESTED_AGAINST_STRONGEST_TARGET |
+  // CRITIQUE_REQUIRES_REFORMULATION | CRITIQUE_APPEARS_STRUCTURALLY_PRESERVABLE | UNDETERMINED
+  critiqueSurvival   String  @default("UNDETERMINED")
+  // Set when a comparative-superiority claim was detected but the strongest
+  // version of the compared target has not been matched against.
+  comparativeSuperiorityUnverified Boolean @default(false)
+
   // Six independently-displayed dimensions. Value: LOW_RISK | NEEDS_CHECK | HIGH_RISK | UNDETERMINED
+  // NOTE (Phase 2): the heuristic-only layer never emits LOW_RISK — that requires
+  // an evidence-backed substantive verification layer that does not exist yet.
   primaryLiterature       String @default("UNDETERMINED") // 一次文献理解
   latestPositionAlignment String @default("UNDETERMINED") // 最新立場整合性
   alreadyProcessedPoints  String @default("UNDETERMINED") // 既処理論点見落とし
